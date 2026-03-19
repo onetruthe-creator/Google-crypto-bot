@@ -4,7 +4,9 @@
 # mode. The Tegra kernel lacks nf_tables modules, so the embedded K3s
 # network-policy controller panics immediately on startup.
 #
-# Fix: switch iptables/ip6tables to legacy mode inside the container.
+# Fix: (1) disable K3s network-policy controller via config so kube-router
+#      never runs, and (2) switch iptables to legacy as belt-and-suspenders
+#      for flannel and kube-proxy.
 
 FROM ghcr.io/nvidia/openshell/cluster:0.0.10
 
@@ -40,3 +42,12 @@ RUN set -e; \
 RUN iptables --version && \
     iptables --version | grep -qi legacy || \
     (echo "[ERROR] iptables is still nf_tables — check container base OS" && exit 1)
+
+# Primary fix: disable K3s network-policy controller (kube-router) via K3s
+# config. kube-router is what panics — it fatally calls iptables nf_tables on
+# startup. Disabling it prevents the panic entirely, independent of iptables mode.
+# Note: this only disables NetworkPolicy enforcement; it does not affect pod
+# networking, DNS, or any other cluster functionality openshell depends on.
+RUN mkdir -p /etc/rancher/k3s && \
+    printf 'disable:\n  - network-policy\n' >> /etc/rancher/k3s/config.yaml && \
+    echo "[OK] network-policy controller disabled in K3s config"
