@@ -12,15 +12,14 @@ FROM ghcr.io/nvidia/openshell/cluster:0.0.10
 
 USER root
 
-# Install iptables (ships both nft and legacy binaries) and switch all
-# variants to legacy. Required because the Tegra kernel lacks nf_tables
-# modules — every nft iptables call returns "No such file or directory".
+# Install iptables (ships both nft and legacy binaries) and switch to legacy.
+# arptables/ebtables-legacy are not registered in this image, so only
+# iptables and ip6tables are switched. Required because the Tegra kernel
+# lacks nf_tables modules — every nft iptables call returns ENOENT.
 RUN apt-get update && \
     apt-get install -y iptables && \
     update-alternatives --set iptables  /usr/sbin/iptables-legacy  && \
     update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy && \
-    update-alternatives --set arptables /usr/sbin/arptables-legacy && \
-    update-alternatives --set ebtables  /usr/sbin/ebtables-legacy  && \
     rm -rf /var/lib/apt/lists/*
 
 # Verify legacy mode is active.
