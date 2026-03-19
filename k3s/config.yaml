@@ -1,0 +1,16 @@
+# K3s configuration for Jetson Orin Nano
+# Place this file at /etc/rancher/k3s/config.yaml before starting K3s.
+#
+# Key fixes for Jetson (Tegra kernel):
+#  - disable-network-policy: avoids kube-router iptables nf_tables errors
+#  - flannel-backend vxlan: more compatible with Tegra kernel than wireguard
+#  - write-kubeconfig-mode: allows non-root kubectl access
+
+disable-network-policy: true
+flannel-backend: "vxlan"
+write-kubeconfig-mode: "0644"
+
+# Disable components not needed for edge/gateway workloads
+disable:
+  - traefik
+  - servicelb
