@@ -1,0 +1,25 @@
+# CoreDNS deployment patch
+#
+# Increases the CoreDNS replica count to 2 so that DNS remains available while
+# one pod is restarting.  Apply after the cluster is up:
+#
+#   kubectl patch deployment coredns -n kube-system --patch-file coredns-patch.yaml
+#
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coredns
+  namespace: kube-system
+spec:
+  replicas: 2
+  template:
+    spec:
+      # Tolerate the node being in a not-ready state during startup so CoreDNS
+      # can schedule early and be available before other pods need DNS.
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoSchedule
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoSchedule

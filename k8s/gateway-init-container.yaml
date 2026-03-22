@@ -1,0 +1,45 @@
+# Gateway pod – init container that fixes iptables before k3s starts
+#
+# If the gateway runs as a pod itself (rather than on a bare node), embed the
+# iptables-legacy fix as an init container so it runs before the main process.
+# This is the pattern needed when you cannot modify the host's
+# /etc/rancher/k3s/config.yaml.
+#
+# Merge this snippet into your existing gateway Pod / Deployment spec.
+#
+# Example usage:
+#   kubectl patch deployment <gateway-deployment> -n <ns> --patch-file gateway-init-container.yaml
+#
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway          # replace with your actual gateway deployment name
+spec:
+  template:
+    spec:
+      # The init container must run as root and with NET_ADMIN + NET_RAW so it
+      # can manipulate iptables.
+      initContainers:
+        - name: fix-iptables
+          image: alpine:3.19
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              # Install iptables-legacy if not present
+              apk add --no-cache iptables-legacy 2>/dev/null || true
+              # Point all iptables variants to the legacy (xtables) backend
+              for cmd in iptables iptables-restore iptables-save \
+                         ip6tables ip6tables-restore ip6tables-save; do
+                legacy="/sbin/${cmd}-legacy"
+                [ -x "$legacy" ] || continue
+                ln -sf "$legacy" "/usr/local/sbin/${cmd}"
+                echo "Linked $cmd -> $legacy"
+              done
+          securityContext:
+            privileged: true
+            capabilities:
+              add:
+                - NET_ADMIN
+                - NET_RAW

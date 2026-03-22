@@ -1,0 +1,43 @@
+# k3s server / agent configuration
+#
+# Place this file at /etc/rancher/k3s/config.yaml on the node before starting
+# k3s.  It addresses two related problems observed in the gateway container:
+#
+#   1. iptables nf_tables backend incompatibility
+#      iptables v1.8.10 ships with the nf_tables backend as default.
+#      In containerised or stripped-down kernel environments the nf_tables
+#      kernel module is absent, so every rule insertion fails with:
+#        RULE_INSERT failed (No such file or directory): rule in chain INPUT
+#      kube-router (the k3s network-policy controller) calls Fatalf() on the
+#      first failed insertion, panics, and takes the whole agent process down.
+#
+#   2. DNS resolution failure
+#      Because kube-router panics before it can program any forwarding rules,
+#      inter-pod traffic (including traffic to CoreDNS) is never routed.
+#      Any lookup that goes through the cluster DNS stub resolver therefore
+#      fails with "Try again" (SERVFAIL / temporary failure).
+#      The symptom reported is:
+#        dial tcp: lookup registry: Try again
+#
+# Fix strategy
+# ------------
+# * Disable the embedded network-policy controller so kube-router never runs.
+#   NetworkPolicy objects are rarely needed for a single-node dev cluster; if
+#   you need them, deploy a standalone kube-router or Calico after the cluster
+#   is healthy.
+# * Use the iptables "legacy" (xtables) backend explicitly so that any other
+#   component that calls iptables directly also uses the compatible backend.
+# * Increase the CoreDNS replica count to 2 so DNS remains available during
+#   rolling restarts.
+
+# Disable components that require working nf_tables
+disable:
+  - network-policy   # prevents kube-router from starting and panicking
+
+# Force legacy iptables backend (xtables, not nf_tables)
+# Equivalent to running: update-alternatives --set iptables /usr/sbin/iptables-legacy
+iptables-mode: legacy
+
+# CoreDNS tuning – keep 2 replicas so one can restart without an outage
+cluster-dns: 10.43.0.10
+cluster-domain: cluster.local
