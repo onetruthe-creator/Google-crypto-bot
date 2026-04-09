@@ -27,8 +27,9 @@ skills_dir = sys.argv[2]
 def parse_toml_simple(text):
     """Minimal TOML parser — handles the flat fields used by these agents."""
     result = {}
-    # instructions.text block
-    m = re.search(r'\[instructions\]\s*\ntext\s*=\s*"""(.*?)"""', text, re.DOTALL)
+    # triple-quoted instruction fields (developer_instructions, instructions, prompt, etc.)
+    m = re.search(r'^(?:developer_instructions|instructions|prompt|system_prompt)\s*=\s*"""(.*?)"""',
+                  text, re.DOTALL | re.MULTILINE)
     if m:
         result['instructions'] = m.group(1).strip()
     # scalar string fields
