@@ -31,6 +31,7 @@ METACLAW_BASE   = "http://127.0.0.1:30000/v1"
 ZEROCLAW_BIN     = os.path.expanduser("~/.cargo/bin/zeroclaw")
 SKILLS_DIR       = os.path.expanduser("~/.zeroclaw/workspace/skills")
 ZEROCLAW_WEBHOOK = "http://127.0.0.1:3000/webhook"
+ZEROCLAW_TOKEN   = os.environ.get("ZEROCLAW_TOKEN", "")
 # ─────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
@@ -84,8 +85,11 @@ def run_zeroclaw(user_msg: str) -> str:
     Gateway runs the agent with installed skills and ollama as LLM backend.
     """
     try:
+        headers = {}
+        if ZEROCLAW_TOKEN:
+            headers["Authorization"] = f"Bearer {ZEROCLAW_TOKEN}"
         with httpx.Client(timeout=120) as client:
-            resp = client.post(ZEROCLAW_WEBHOOK, json={"message": user_msg})
+            resp = client.post(ZEROCLAW_WEBHOOK, json={"message": user_msg}, headers=headers)
             resp.raise_for_status()
             data = resp.json()
             # Response may be {"reply": "..."} or {"message": "..."} or {"response": "..."}
