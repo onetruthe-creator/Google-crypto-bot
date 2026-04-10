@@ -1,0 +1,15 @@
+[Unit]
+Description=MetaClaw AI Proxy
+After=network.target
+
+[Service]
+Type=simple
+User=damon
+WorkingDirectory=/home/damon/metaclaw
+ExecStart=/home/damon/.local/bin/metaclaw start
+Restart=on-failure
+RestartSec=5
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/damon/.local/bin
+
+[Install]
+WantedBy=multi-user.target
