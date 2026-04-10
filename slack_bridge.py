@@ -52,7 +52,7 @@ def metaclaw_safety_check(user_msg: str) -> tuple[bool, str]:
     If MetaClaw blocks the request it will return a refusal; we surface that.
     """
     try:
-        with httpx.Client(timeout=30) as client:
+        with httpx.Client(timeout=120) as client:
             resp = client.post(METACLAW_URL, json={
                 "model": MODEL,
                 "messages": [
