@@ -1,28 +1,16 @@
 #!/usr/bin/env python3
-"""Slack → MetaClaw bridge using Slack Bolt (socket mode)
+"""Slack → MetaClaw → ZeroClaw bridge (socket mode)
+
+Flow:
+  Slack DM/mention
+    → MetaClaw safety pre-check (financial kill switch)
+    → if approved: ZeroClaw agent (136 skills, uses MetaClaw as LLM backend)
+    → response back to Slack
 
 Setup:
   pip install slack-bolt slack-sdk httpx
 
-Slack App Requirements:
-  1. Go to https://api.slack.com/apps → Create New App → From scratch
-  2. Under "OAuth & Permissions" add Bot Token Scopes:
-       app_mentions:read
-       channels:history
-       chat:write
-       im:history
-       im:write
-       mpim:history
-  3. Under "Event Subscriptions" → Enable Events → Subscribe to bot events:
-       app_mention
-       message.im
-  4. Under "Socket Mode" → Enable Socket Mode
-  5. Under "Basic Information" → App-Level Tokens → Generate token with:
-       connections:write scope  →  this is your SLACK_APP_TOKEN
-  6. Install app to workspace → copy "Bot User OAuth Token" → SLACK_BOT_TOKEN
-  7. Invite your bot to the channel: /invite @YourBotName
-
-Environment variables (or edit constants below):
+Environment variables:
   SLACK_BOT_TOKEN   xoxb-...
   SLACK_APP_TOKEN   xapp-...
 """
@@ -38,88 +26,134 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 # ── Config ────────────────────────────────────────────────────────────────────
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "xoxb-REPLACE_ME")
 SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN", "xapp-REPLACE_ME")
-METACLAW        = "http://127.0.0.1:30000/v1/chat/completions"
+METACLAW_URL    = "http://127.0.0.1:30000/v1/chat/completions"
 MODEL           = "llama3.2"
+METACLAW_BASE   = "http://127.0.0.1:30000/v1"
 ZEROCLAW_BIN    = os.path.expanduser("~/.cargo/bin/zeroclaw")
 SKILLS_DIR      = os.path.expanduser("~/.zeroclaw/workspace/skills")
-USE_ZEROCLAW    = os.path.isfile(ZEROCLAW_BIN)  # use agent if binary exists
 # ─────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
 app = App(token=SLACK_BOT_TOKEN)
 
 
-def list_skills() -> str:
-    """Return a comma-separated list of installed skill names."""
-    dirs = glob.glob(os.path.join(SKILLS_DIR, "*/SKILL.md"))
-    names = sorted(os.path.basename(os.path.dirname(p)) for p in dirs)
-    return ", ".join(names) if names else "none"
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def list_skills() -> list[str]:
+    paths = glob.glob(os.path.join(SKILLS_DIR, "*/SKILL.md"))
+    return sorted(os.path.basename(os.path.dirname(p)) for p in paths)
 
 
-def ask_zeroclaw(user_msg: str) -> str:
-    """Run zeroclaw agent and return its reply (uses all installed skills)."""
+def metaclaw_safety_check(user_msg: str) -> tuple[bool, str]:
+    """
+    Send message to MetaClaw for kill-switch evaluation.
+    Returns (allowed: bool, metaclaw_response: str).
+    If MetaClaw blocks the request it will return a refusal; we surface that.
+    """
+    try:
+        with httpx.Client(timeout=30) as client:
+            resp = client.post(METACLAW_URL, json={
+                "model": MODEL,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a financial safety gate. "
+                            "If the user message requests transferring, sending, "
+                            "or moving crypto/funds, respond with exactly: BLOCKED. "
+                            "Otherwise respond with exactly: APPROVED."
+                        ),
+                    },
+                    {"role": "user", "content": user_msg},
+                ],
+            })
+            resp.raise_for_status()
+            verdict = resp.json()["choices"][0]["message"]["content"].strip().upper()
+            if "BLOCKED" in verdict:
+                return False, "MetaClaw financial kill switch activated. Transaction blocked."
+            return True, "APPROVED"
+    except Exception as e:
+        # If MetaClaw is down, fail safe — block the request
+        return False, f"MetaClaw unreachable: {e}. Request blocked for safety."
+
+
+def run_zeroclaw(user_msg: str) -> str:
+    """
+    Invoke zeroclaw agent with MetaClaw as the LLM provider.
+    ZeroClaw uses its 136 installed skills and calls MetaClaw for LLM inference.
+    """
+    if not os.path.isfile(ZEROCLAW_BIN):
+        return ask_metaclaw_direct(user_msg)
+
     try:
         result = subprocess.run(
-            [ZEROCLAW_BIN, "agent",
-             "--provider", "custom:http://127.0.0.1:30000/v1",
-             "--model", MODEL,
-             "-m", user_msg],
-            capture_output=True, text=True, timeout=120
+            [
+                ZEROCLAW_BIN, "agent",
+                "--provider", f"custom:{METACLAW_BASE}",
+                "--model", MODEL,
+                "-m", user_msg,
+            ],
+            capture_output=True, text=True, timeout=180,
         )
         output = result.stdout.strip()
-        return output if output else (result.stderr.strip() or "No response from ZeroClaw.")
+        if not output:
+            output = result.stderr.strip() or "ZeroClaw returned no output."
+        return output
     except subprocess.TimeoutExpired:
-        return "ZeroClaw timed out."
+        return "ZeroClaw agent timed out (180s). Try a simpler request."
     except Exception as e:
-        return f"Error running ZeroClaw: {e}"
+        return f"ZeroClaw error: {e}"
 
 
-def ask_metaclaw(user_msg: str) -> str:
-    """Send message to MetaClaw and return the reply."""
+def ask_metaclaw_direct(user_msg: str) -> str:
+    """Fallback: send directly to MetaClaw if ZeroClaw binary not found."""
     try:
         with httpx.Client(timeout=120) as client:
-            resp = client.post(METACLAW, json={
+            resp = client.post(METACLAW_URL, json={
                 "model": MODEL,
                 "messages": [{"role": "user", "content": user_msg}],
             })
             resp.raise_for_status()
             return resp.json()["choices"][0]["message"]["content"]
     except Exception as e:
-        return f"Error contacting MetaClaw: {e}"
+        return f"MetaClaw error: {e}"
 
 
-def respond(user_msg: str) -> str:
-    """Route to ZeroClaw agent (with skills) if available, else MetaClaw."""
-    if USE_ZEROCLAW:
-        return ask_zeroclaw(user_msg)
-    return ask_metaclaw(user_msg)
+def pipeline(user_msg: str) -> str:
+    """Full pipeline: MetaClaw safety check → ZeroClaw agent → response."""
+    # Step 1: MetaClaw kill switch
+    allowed, verdict = metaclaw_safety_check(user_msg)
+    if not allowed:
+        log.warning(f"[BLOCKED] {user_msg[:80]}")
+        return f"🛑 {verdict}"
 
+    # Step 2: ZeroClaw agent with skills
+    log.info(f"[APPROVED] routing to ZeroClaw: {user_msg[:80]}")
+    return run_zeroclaw(user_msg)
+
+
+# ── Slack handlers ────────────────────────────────────────────────────────────
 
 @app.event("app_mention")
 def handle_mention(event, say):
-    """Reply to @mentions in channels."""
-    # Strip the bot mention prefix (<@BOTID> ...)
     text = event.get("text", "")
-    # Remove the mention token
     if "<@" in text:
         text = text.split(">", 1)[-1].strip()
 
-    print(f"[mention] {text[:120]}")
     if text.lower().strip() == "skills":
-        say(f"Installed skills: {list_skills()}")
+        skills = list_skills()
+        say(f"{len(skills)} skills installed: {', '.join(skills)}")
         return
-    reply = respond(text)
-    print(f"[reply]   {reply[:120]}")
-    say(reply)
+
+    log.info(f"[mention] {text[:120]}")
+    say(pipeline(text))
 
 
 @app.event("message")
 def handle_dm(event, say):
-    """Reply to direct messages (DMs)."""
-    # Ignore bot messages and message subtypes (edits, deletes, etc.)
     if event.get("bot_id") or event.get("subtype"):
         return
-    # Only handle DMs (channel_type == "im")
     if event.get("channel_type") != "im":
         return
 
@@ -127,14 +161,16 @@ def handle_dm(event, say):
     if not text:
         return
 
-    print(f"[dm]    {text[:120]}")
     if text.lower().strip() == "skills":
-        say(f"Installed skills ({len(glob.glob(os.path.join(SKILLS_DIR, '*/SKILL.md')))}): {list_skills()}")
+        skills = list_skills()
+        say(f"{len(skills)} skills installed:\n" + "\n".join(f"• {s}" for s in skills))
         return
-    reply = respond(text)
-    print(f"[reply] {reply[:120]}")
-    say(reply)
 
+    log.info(f"[dm] {text[:120]}")
+    say(pipeline(text))
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     if "REPLACE_ME" in SLACK_BOT_TOKEN or "REPLACE_ME" in SLACK_APP_TOKEN:
@@ -143,6 +179,12 @@ if __name__ == "__main__":
         print("  export SLACK_APP_TOKEN=xapp-...")
         raise SystemExit(1)
 
+    skills = list_skills()
+    zc_status = "found" if os.path.isfile(ZEROCLAW_BIN) else "NOT FOUND (falling back to MetaClaw)"
+    print(f"ZeroClaw binary: {zc_status}")
+    print(f"Skills loaded:   {len(skills)}")
+    print(f"Pipeline:        Slack → MetaClaw (safety) → ZeroClaw (agent) → Slack")
     print("Slack bridge starting (socket mode)...")
+
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.start()
