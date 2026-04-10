@@ -110,10 +110,11 @@ def run_zeroclaw(user_msg: str) -> str:
             # Webhook may return plain text or JSON
             try:
                 data = resp.json()
+                # Handle ZeroClaw {"model":..., "response":...} and other formats
                 return (
-                    data.get("reply")
+                    data.get("response")
+                    or data.get("reply")
                     or data.get("message")
-                    or data.get("response")
                     or data.get("content")
                     or str(data)
                 )
