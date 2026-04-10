@@ -1,0 +1,16 @@
+[Unit]
+Description=Slack → MetaClaw Bridge
+After=network.target metaclaw.service
+
+[Service]
+Type=simple
+User=damon
+WorkingDirectory=/home/damon
+ExecStart=/usr/bin/python3 /home/damon/Google-crypto-bot/slack_bridge.py
+Restart=on-failure
+RestartSec=10
+Environment=SLACK_BOT_TOKEN=xoxb-REPLACE_ME
+Environment=SLACK_APP_TOKEN=xapp-REPLACE_ME
+
+[Install]
+WantedBy=multi-user.target
