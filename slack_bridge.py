@@ -18,7 +18,6 @@ Environment variables:
 import os
 import glob
 import logging
-import subprocess
 import httpx
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -29,8 +28,9 @@ SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN", "xapp-REPLACE_ME")
 METACLAW_URL    = "http://127.0.0.1:30000/v1/chat/completions"
 MODEL           = "llama3.2"
 METACLAW_BASE   = "http://127.0.0.1:30000/v1"
-ZEROCLAW_BIN    = os.path.expanduser("~/.cargo/bin/zeroclaw")
-SKILLS_DIR      = os.path.expanduser("~/.zeroclaw/workspace/skills")
+ZEROCLAW_BIN     = os.path.expanduser("~/.cargo/bin/zeroclaw")
+SKILLS_DIR       = os.path.expanduser("~/.zeroclaw/workspace/skills")
+ZEROCLAW_WEBHOOK = "http://127.0.0.1:3000/webhook"
 # ─────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
@@ -80,30 +80,28 @@ def metaclaw_safety_check(user_msg: str) -> tuple[bool, str]:
 
 def run_zeroclaw(user_msg: str) -> str:
     """
-    Invoke zeroclaw agent with MetaClaw as the LLM provider.
-    ZeroClaw uses its 136 installed skills and calls MetaClaw for LLM inference.
+    Send message to ZeroClaw gateway webhook.
+    Gateway runs the agent with installed skills and ollama as LLM backend.
     """
-    if not os.path.isfile(ZEROCLAW_BIN):
-        return ask_metaclaw_direct(user_msg)
-
     try:
-        result = subprocess.run(
-            [
-                ZEROCLAW_BIN, "agent",
-                "--provider", "ollama",
-                "--model", MODEL,
-                "-m", user_msg,
-            ],
-            capture_output=True, text=True, timeout=180,
-        )
-        output = result.stdout.strip()
-        if not output:
-            output = result.stderr.strip() or "ZeroClaw returned no output."
-        return output
-    except subprocess.TimeoutExpired:
-        return "ZeroClaw agent timed out (180s). Try a simpler request."
+        with httpx.Client(timeout=120) as client:
+            resp = client.post(ZEROCLAW_WEBHOOK, json={"message": user_msg})
+            resp.raise_for_status()
+            data = resp.json()
+            # Response may be {"reply": "..."} or {"message": "..."} or {"response": "..."}
+            return (
+                data.get("reply")
+                or data.get("message")
+                or data.get("response")
+                or data.get("content")
+                or str(data)
+            )
+    except httpx.HTTPStatusError as e:
+        log.warning(f"Webhook HTTP error {e.response.status_code}, falling back to MetaClaw")
+        return ask_metaclaw_direct(user_msg)
     except Exception as e:
-        return f"ZeroClaw error: {e}"
+        log.warning(f"Webhook error: {e}, falling back to MetaClaw")
+        return ask_metaclaw_direct(user_msg)
 
 
 def ask_metaclaw_direct(user_msg: str) -> str:
