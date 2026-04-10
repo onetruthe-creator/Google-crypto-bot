@@ -1,0 +1,15 @@
+[Unit]
+Description=ZeroClaw 3D Monitor
+After=network.target zeroclaw.service slack.service
+
+[Service]
+Type=simple
+User=damon
+WorkingDirectory=/home/damon/Google-crypto-bot
+ExecStart=/usr/bin/python3 /home/damon/Google-crypto-bot/monitor_server.py
+Restart=on-failure
+RestartSec=5
+Environment=ZEROCLAW_TOKEN=REPLACE_ME
+
+[Install]
+WantedBy=multi-user.target
