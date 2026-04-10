@@ -46,12 +46,28 @@ def list_skills() -> list[str]:
     return sorted(os.path.basename(os.path.dirname(p)) for p in paths)
 
 
+_BLOCK_KEYWORDS = [
+    "send eth", "send btc", "send crypto", "send funds", "send money",
+    "transfer eth", "transfer btc", "transfer crypto", "transfer funds",
+    "withdraw", "wire transfer", "send coin", "send token",
+    "move funds", "move crypto", "pay with crypto",
+]
+
 def metaclaw_safety_check(user_msg: str) -> tuple[bool, str]:
     """
-    Send message to MetaClaw for kill-switch evaluation.
-    Returns (allowed: bool, metaclaw_response: str).
-    If MetaClaw blocks the request it will return a refusal; we surface that.
+    Fast keyword pre-screen, then MetaClaw LLM check only if suspicious.
+    Returns (allowed: bool, reason: str).
     """
+    lower = user_msg.lower()
+    # Fast path: block obvious financial transfer keywords immediately
+    for kw in _BLOCK_KEYWORDS:
+        if kw in lower:
+            log.warning(f"[KEYWORD BLOCK] matched '{kw}'")
+            return False, "MetaClaw financial kill switch activated. Transaction blocked."
+    # Fast path: approve clearly safe messages without LLM call
+    if len(user_msg) < 200 and not any(w in lower for w in ["wallet", "address", "crypto", "btc", "eth", "usdt", "usdc"]):
+        return True, "APPROVED"
+    # Only call MetaClaw LLM for ambiguous messages mentioning crypto terms
     try:
         with httpx.Client(timeout=120) as client:
             resp = client.post(METACLAW_URL, json={
@@ -91,15 +107,18 @@ def run_zeroclaw(user_msg: str) -> str:
         with httpx.Client(timeout=120) as client:
             resp = client.post(ZEROCLAW_WEBHOOK, json={"message": user_msg}, headers=headers)
             resp.raise_for_status()
-            data = resp.json()
-            # Response may be {"reply": "..."} or {"message": "..."} or {"response": "..."}
-            return (
-                data.get("reply")
-                or data.get("message")
-                or data.get("response")
-                or data.get("content")
-                or str(data)
-            )
+            # Webhook may return plain text or JSON
+            try:
+                data = resp.json()
+                return (
+                    data.get("reply")
+                    or data.get("message")
+                    or data.get("response")
+                    or data.get("content")
+                    or str(data)
+                )
+            except Exception:
+                return resp.text.strip() or "No response."
     except httpx.HTTPStatusError as e:
         log.warning(f"Webhook HTTP error {e.response.status_code}, falling back to MetaClaw")
         return ask_metaclaw_direct(user_msg)
