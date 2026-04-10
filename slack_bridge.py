@@ -90,7 +90,7 @@ def run_zeroclaw(user_msg: str) -> str:
         result = subprocess.run(
             [
                 ZEROCLAW_BIN, "agent",
-                "--provider", f"custom:{METACLAW_BASE}",
+                "--provider", "ollama",
                 "--model", MODEL,
                 "-m", user_msg,
             ],
