@@ -28,7 +28,9 @@ Environment variables (or edit constants below):
 """
 
 import os
+import glob
 import logging
+import subprocess
 import httpx
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -38,10 +40,38 @@ SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "xoxb-REPLACE_ME")
 SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN", "xapp-REPLACE_ME")
 METACLAW        = "http://127.0.0.1:30000/v1/chat/completions"
 MODEL           = "llama3.2"
+ZEROCLAW_BIN    = os.path.expanduser("~/.cargo/bin/zeroclaw")
+SKILLS_DIR      = os.path.expanduser("~/.zeroclaw/workspace/skills")
+USE_ZEROCLAW    = os.path.isfile(ZEROCLAW_BIN)  # use agent if binary exists
 # ─────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
 app = App(token=SLACK_BOT_TOKEN)
+
+
+def list_skills() -> str:
+    """Return a comma-separated list of installed skill names."""
+    dirs = glob.glob(os.path.join(SKILLS_DIR, "*/SKILL.md"))
+    names = sorted(os.path.basename(os.path.dirname(p)) for p in dirs)
+    return ", ".join(names) if names else "none"
+
+
+def ask_zeroclaw(user_msg: str) -> str:
+    """Run zeroclaw agent and return its reply (uses all installed skills)."""
+    try:
+        result = subprocess.run(
+            [ZEROCLAW_BIN, "agent",
+             "--provider", "custom:http://127.0.0.1:30000/v1",
+             "--model", MODEL,
+             "-m", user_msg],
+            capture_output=True, text=True, timeout=120
+        )
+        output = result.stdout.strip()
+        return output if output else (result.stderr.strip() or "No response from ZeroClaw.")
+    except subprocess.TimeoutExpired:
+        return "ZeroClaw timed out."
+    except Exception as e:
+        return f"Error running ZeroClaw: {e}"
 
 
 def ask_metaclaw(user_msg: str) -> str:
@@ -58,6 +88,13 @@ def ask_metaclaw(user_msg: str) -> str:
         return f"Error contacting MetaClaw: {e}"
 
 
+def respond(user_msg: str) -> str:
+    """Route to ZeroClaw agent (with skills) if available, else MetaClaw."""
+    if USE_ZEROCLAW:
+        return ask_zeroclaw(user_msg)
+    return ask_metaclaw(user_msg)
+
+
 @app.event("app_mention")
 def handle_mention(event, say):
     """Reply to @mentions in channels."""
@@ -68,7 +105,10 @@ def handle_mention(event, say):
         text = text.split(">", 1)[-1].strip()
 
     print(f"[mention] {text[:120]}")
-    reply = ask_metaclaw(text)
+    if text.lower().strip() == "skills":
+        say(f"Installed skills: {list_skills()}")
+        return
+    reply = respond(text)
     print(f"[reply]   {reply[:120]}")
     say(reply)
 
@@ -88,7 +128,10 @@ def handle_dm(event, say):
         return
 
     print(f"[dm]    {text[:120]}")
-    reply = ask_metaclaw(text)
+    if text.lower().strip() == "skills":
+        say(f"Installed skills ({len(glob.glob(os.path.join(SKILLS_DIR, '*/SKILL.md')))}): {list_skills()}")
+        return
+    reply = respond(text)
     print(f"[reply] {reply[:120]}")
     say(reply)
 
