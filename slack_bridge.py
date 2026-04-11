@@ -51,48 +51,21 @@ _BLOCK_KEYWORDS = [
     "transfer eth", "transfer btc", "transfer crypto", "transfer funds",
     "withdraw", "wire transfer", "send coin", "send token",
     "move funds", "move crypto", "pay with crypto",
+    "send usdt", "send usdc", "send sol", "send bnb",
+    "transfer usdt", "transfer usdc", "transfer sol",
 ]
 
 def metaclaw_safety_check(user_msg: str) -> tuple[bool, str]:
     """
-    Fast keyword pre-screen, then MetaClaw LLM check only if suspicious.
-    Returns (allowed: bool, reason: str).
+    Instant keyword-only kill switch — no LLM call, no latency.
+    Blocks explicit financial transfer requests immediately.
     """
     lower = user_msg.lower()
-    # Fast path: block obvious financial transfer keywords immediately
     for kw in _BLOCK_KEYWORDS:
         if kw in lower:
             log.warning(f"[KEYWORD BLOCK] matched '{kw}'")
             return False, "MetaClaw financial kill switch activated. Transaction blocked."
-    # Fast path: approve clearly safe messages without LLM call
-    if len(user_msg) < 200 and not any(w in lower for w in ["wallet", "address", "crypto", "btc", "eth", "usdt", "usdc"]):
-        return True, "APPROVED"
-    # Only call MetaClaw LLM for ambiguous messages mentioning crypto terms
-    try:
-        with httpx.Client(timeout=120) as client:
-            resp = client.post(METACLAW_URL, json={
-                "model": MODEL,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a financial safety gate. "
-                            "If the user message requests transferring, sending, "
-                            "or moving crypto/funds, respond with exactly: BLOCKED. "
-                            "Otherwise respond with exactly: APPROVED."
-                        ),
-                    },
-                    {"role": "user", "content": user_msg},
-                ],
-            })
-            resp.raise_for_status()
-            verdict = resp.json()["choices"][0]["message"]["content"].strip().upper()
-            if "BLOCKED" in verdict:
-                return False, "MetaClaw financial kill switch activated. Transaction blocked."
-            return True, "APPROVED"
-    except Exception as e:
-        # If MetaClaw is down, fail safe — block the request
-        return False, f"MetaClaw unreachable: {e}. Request blocked for safety."
+    return True, "APPROVED"
 
 
 def run_zeroclaw(user_msg: str) -> str:
