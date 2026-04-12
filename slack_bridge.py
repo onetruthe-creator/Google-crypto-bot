@@ -26,7 +26,7 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "xoxb-REPLACE_ME")
 SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN", "xapp-REPLACE_ME")
 METACLAW_URL    = "http://127.0.0.1:30000/v1/chat/completions"
-MODEL           = "llama3.2:1b"
+MODEL           = "tinydolphin:latest"
 METACLAW_BASE   = "http://127.0.0.1:30000/v1"
 ZEROCLAW_BIN     = os.path.expanduser("~/.cargo/bin/zeroclaw")
 SKILLS_DIR       = os.path.expanduser("~/.zeroclaw/workspace/skills")
