@@ -77,7 +77,7 @@ def run_zeroclaw(user_msg: str) -> str:
         headers = {}
         if ZEROCLAW_TOKEN:
             headers["Authorization"] = f"Bearer {ZEROCLAW_TOKEN}"
-        with httpx.Client(timeout=120) as client:
+        with httpx.Client(timeout=28) as client:
             resp = client.post(ZEROCLAW_WEBHOOK, json={"message": user_msg}, headers=headers)
             resp.raise_for_status()
             # Webhook may return plain text or JSON
@@ -142,6 +142,7 @@ def handle_mention(event, say):
         return
 
     log.info(f"[mention] {text[:120]}")
+    say("⏳ Processing...")
     say(pipeline(text))
 
 
@@ -162,6 +163,7 @@ def handle_dm(event, say):
         return
 
     log.info(f"[dm] {text[:120]}")
+    say("⏳ Processing...")
     say(pipeline(text))
 
 
