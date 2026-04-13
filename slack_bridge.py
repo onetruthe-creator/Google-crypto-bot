@@ -25,7 +25,7 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 # ── Config ────────────────────────────────────────────────────────────────────
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "xoxb-REPLACE_ME")
 SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN", "xapp-REPLACE_ME")
-METACLAW_URL    = "http://127.0.0.1:30000/v1/chat/completions"
+METACLAW_URL    = "http://127.0.0.1:11434/v1/chat/completions"
 MODEL           = "llama3.2:1b"
 METACLAW_BASE   = "http://127.0.0.1:30000/v1"
 ZEROCLAW_BIN     = os.path.expanduser("~/.cargo/bin/zeroclaw")
@@ -77,7 +77,7 @@ def run_zeroclaw(user_msg: str) -> str:
         headers = {}
         if ZEROCLAW_TOKEN:
             headers["Authorization"] = f"Bearer {ZEROCLAW_TOKEN}"
-        with httpx.Client(timeout=28) as client:
+        with httpx.Client(timeout=55) as client:
             resp = client.post(ZEROCLAW_WEBHOOK, json={"message": user_msg}, headers=headers)
             resp.raise_for_status()
             # Webhook may return plain text or JSON
