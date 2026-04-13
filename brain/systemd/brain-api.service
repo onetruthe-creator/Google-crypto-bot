@@ -1,0 +1,43 @@
+# brain-api.service
+# Runs the Brain FastAPI app + embedded worker thread (single-process mode).
+#
+# Install:
+#   sudo cp brain/systemd/brain-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now brain-api.service
+#
+# NOTE: EnvironmentFile does NOT support quoted values or export statements.
+#       Your .env file must use plain  KEY=VALUE  lines (no quotes, no export).
+
+[Unit]
+Description=Brain API (Metaclaw → Slack → Execution hub)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+
+WorkingDirectory=/home/ubuntu/Google-crypto-bot/brain
+EnvironmentFile=/home/ubuntu/Google-crypto-bot/brain/.env
+
+ExecStart=/usr/bin/python3 -m uvicorn app.main:app \
+    --host 0.0.0.0 \
+    --port 8080 \
+    --log-level info
+
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Give the process time to shut down cleanly
+TimeoutStopSec=15
+
+# Security hardening (optional, remove if causing issues)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

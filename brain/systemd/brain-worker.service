@@ -1,0 +1,39 @@
+# brain-worker.service
+# OPTIONAL: Use this only if you want the execution worker as a SEPARATE process
+# instead of the default embedded thread in brain-api.service.
+#
+# If using this, edit brain/app/main.py and remove the threading.Thread block
+# in the lifespan() function to avoid running two workers simultaneously.
+#
+# Install:
+#   sudo cp brain/systemd/brain-worker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now brain-worker.service
+
+[Unit]
+Description=Brain Execution Worker
+After=network-online.target brain-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+
+WorkingDirectory=/home/ubuntu/Google-crypto-bot/brain
+EnvironmentFile=/home/ubuntu/Google-crypto-bot/brain/.env
+
+ExecStart=/usr/bin/python3 -m app.worker
+
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+TimeoutStopSec=15
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
