@@ -1,65 +1,21 @@
-"""Slack integration: message sending, signature verification, confirm codes."""
-import hashlib
-import hmac
+"""Slack integration: send messages and interactive approval requests."""
 import secrets
 import string
-import time
-from datetime import datetime, timezone
 
 import httpx
 
 from app.config import get_settings
 
 
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-# ---------------------------------------------------------------------------
-# Security
-# ---------------------------------------------------------------------------
-
-def verify_slack_signature(body: bytes, timestamp: str, signature: str) -> bool:
-    """
-    Verify that a request genuinely came from Slack.
-    Algorithm: https://api.slack.com/authentication/verifying-requests-from-slack
-    """
-    settings = get_settings()
-    if not settings.SLACK_SIGNING_SECRET:
-        return False
-
-    try:
-        ts = int(timestamp)
-    except (ValueError, TypeError):
-        return False
-
-    # Reject requests older than 5 minutes (replay attack protection)
-    if abs(time.time() - ts) > 300:
-        return False
-
-    sig_base = f"v0:{timestamp}:{body.decode('utf-8')}"
-    computed = "v0=" + hmac.new(
-        settings.SLACK_SIGNING_SECRET.encode("utf-8"),
-        sig_base.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-
-    return hmac.compare_digest(computed, signature)
-
-
 def generate_confirm_code(length: int = 6) -> str:
-    """Generate a random numeric confirmation code for high-value trade approval."""
+    """Random numeric confirmation code for high-value trade approvals."""
     return "".join(secrets.choice(string.digits) for _ in range(length))
 
-
-# ---------------------------------------------------------------------------
-# Message helpers
-# ---------------------------------------------------------------------------
 
 def send_approval_request(signal: dict, confirm_code: str) -> str | None:
     """
     Post an interactive Slack message with Approve / Reject / Kill Switch buttons.
-    Returns the Slack message timestamp (ts) so we can update it later, or None on failure.
+    Returns the Slack message timestamp (ts) for later updates, or None on failure.
     """
     settings = get_settings()
     if not settings.SLACK_BOT_TOKEN or not settings.SLACK_CHANNEL_ID:
@@ -80,10 +36,7 @@ def send_approval_request(signal: dict, confirm_code: str) -> str | None:
     blocks = [
         {
             "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": ":brain: Signal Approval Required",
-            },
+            "text": {"type": "plain_text", "text": ":brain: Signal Approval Required"},
         },
         {
             "type": "section",
@@ -106,14 +59,12 @@ def send_approval_request(signal: dict, confirm_code: str) -> str | None:
                     "type": "mrkdwn",
                     "text": (
                         f":key: *High-value trade — confirmation code:* `{confirm_code}`\n"
-                        "This code is embedded in the Approve button. "
-                        "Verify the details above before clicking."
+                        "Code is embedded in the Approve button. Verify details before clicking."
                     ),
                 },
             }
         )
 
-    # Approve button value: "signal_id:confirm_code" for high-value, else just "signal_id"
     approve_value = f"{signal_id}:{confirm_code}" if needs_code else signal_id
 
     blocks.append(
@@ -170,7 +121,7 @@ def send_approval_request(signal: dict, confirm_code: str) -> str | None:
             headers={"Authorization": f"Bearer {settings.SLACK_BOT_TOKEN}"},
             json={
                 "channel": settings.SLACK_CHANNEL_ID,
-                "text": f"Signal approval required: {signal['side']} {signal['symbol']}",
+                "text": f"Signal approval: {signal['side']} {signal['symbol']}",
                 "blocks": blocks,
             },
             timeout=10,
@@ -184,7 +135,7 @@ def send_approval_request(signal: dict, confirm_code: str) -> str | None:
 
 
 def update_slack_message(channel: str, ts: str, text: str, emoji: str = ":ballot_box_with_check:") -> None:
-    """Replace an existing Slack message (removes the action buttons after a decision)."""
+    """Replace an existing Slack message after a decision is made (removes buttons)."""
     settings = get_settings()
     if not settings.SLACK_BOT_TOKEN:
         return
@@ -197,10 +148,7 @@ def update_slack_message(channel: str, ts: str, text: str, emoji: str = ":ballot
                 "ts": ts,
                 "text": text,
                 "blocks": [
-                    {
-                        "type": "section",
-                        "text": {"type": "mrkdwn", "text": f"{emoji} {text}"},
-                    }
+                    {"type": "section", "text": {"type": "mrkdwn", "text": f"{emoji} {text}"}}
                 ],
             },
             timeout=10,
