@@ -30,7 +30,7 @@ MODEL           = "llama3.2:1b"
 METACLAW_BASE   = "http://127.0.0.1:30000/v1"
 ZEROCLAW_BIN     = os.path.expanduser("~/.cargo/bin/zeroclaw")
 SKILLS_DIR       = os.path.expanduser("~/.zeroclaw/workspace/skills")
-ZEROCLAW_WEBHOOK = "http://127.0.0.1:3000/webhook"
+ZEROCLAW_WEBHOOK = "http://127.0.0.1:3001/webhook"
 ZEROCLAW_TOKEN   = os.environ.get("ZEROCLAW_TOKEN", "")
 # ─────────────────────────────────────────────────────────────────────────────
 
