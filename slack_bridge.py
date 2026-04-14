@@ -200,6 +200,9 @@ def run_zeroclaw(user_msg: str) -> str:
             # Webhook may return plain text or JSON
             try:
                 data = resp.json()
+                if "error" in data:
+                    log.warning(f"ZeroClaw error response: {data['error']}, falling back to Ollama")
+                    return ask_metaclaw_direct(user_msg)
                 # Handle ZeroClaw {"model":..., "response":...} and other formats
                 return (
                     data.get("response")
@@ -211,10 +214,10 @@ def run_zeroclaw(user_msg: str) -> str:
             except Exception:
                 return resp.text.strip() or "No response."
     except httpx.HTTPStatusError as e:
-        log.warning(f"Webhook HTTP error {e.response.status_code}, falling back to MetaClaw")
+        log.warning(f"Webhook HTTP error {e.response.status_code}, falling back to Ollama")
         return ask_metaclaw_direct(user_msg)
     except Exception as e:
-        log.warning(f"Webhook error: {e}, falling back to MetaClaw")
+        log.warning(f"Webhook error: {e}, falling back to Ollama")
         return ask_metaclaw_direct(user_msg)
 
 
