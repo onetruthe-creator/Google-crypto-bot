@@ -4,7 +4,10 @@
 Flow:
   Slack DM/mention
     → MetaClaw safety pre-check (financial kill switch)
-    → if approved: ZeroClaw agent (136 skills, uses MetaClaw as LLM backend)
+    → if approved: MaxMillion pre-dispatch (trade/metrics intent detected)
+        → ZeroClaw agent narrates the MaxMillion result
+      else (no trade intent):
+        → ZeroClaw agent handles normally
     → response back to Slack
 
 Setup:
@@ -16,6 +19,7 @@ Environment variables:
 """
 
 import os
+import re
 import glob
 import logging
 import httpx
@@ -23,15 +27,16 @@ from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 # ── Config ────────────────────────────────────────────────────────────────────
-SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "xoxb-REPLACE_ME")
-SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN", "xapp-REPLACE_ME")
-METACLAW_URL    = "http://127.0.0.1:11434/v1/chat/completions"
-MODEL           = "llama3.2:1b"
-METACLAW_BASE   = "http://127.0.0.1:30000/v1"
+SLACK_BOT_TOKEN  = os.environ.get("SLACK_BOT_TOKEN", "xoxb-REPLACE_ME")
+SLACK_APP_TOKEN  = os.environ.get("SLACK_APP_TOKEN", "xapp-REPLACE_ME")
+METACLAW_URL     = "http://127.0.0.1:11434/v1/chat/completions"
+MODEL            = "llama3.2:1b"
+METACLAW_BASE    = "http://127.0.0.1:30000/v1"
 ZEROCLAW_BIN     = os.path.expanduser("~/.cargo/bin/zeroclaw")
 SKILLS_DIR       = os.path.expanduser("~/.zeroclaw/workspace/skills")
 ZEROCLAW_WEBHOOK = "http://127.0.0.1:3001/webhook"
 ZEROCLAW_TOKEN   = os.environ.get("ZEROCLAW_TOKEN", "")
+MAXMILLION_URL   = os.environ.get("MAXMILLION_URL", "http://127.0.0.1:8082")
 # ─────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
