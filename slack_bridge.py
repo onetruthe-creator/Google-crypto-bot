@@ -37,6 +37,7 @@ SKILLS_DIR       = os.path.expanduser("~/.zeroclaw/workspace/skills")
 ZEROCLAW_WEBHOOK = "http://127.0.0.1:42617/webhook"
 ZEROCLAW_TOKEN   = os.environ.get("ZEROCLAW_TOKEN", "")
 MAXMILLION_URL   = os.environ.get("MAXMILLION_URL", "http://127.0.0.1:8082")
+PLANDEX_URL      = os.environ.get("PLANDEX_URL", "http://10.0.0.144:8090/ask")
 # ─────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
@@ -235,6 +236,18 @@ def ask_metaclaw_direct(user_msg: str) -> str:
         return f"MetaClaw error: {e}"
 
 
+def ask_plandex(user_msg: str) -> str:
+    """Forward message to Plandex on Raspberry Pi."""
+    try:
+        with httpx.Client(timeout=120) as client:
+            resp = client.post(PLANDEX_URL, json={"message": user_msg})
+            resp.raise_for_status()
+            return resp.json().get("response") or resp.text.strip() or "No response from Plandex."
+    except Exception as e:
+        log.warning(f"[Plandex] unreachable: {e}")
+        return f"Plandex (Pi) is unreachable: {e}"
+
+
 def pipeline(user_msg: str) -> str:
     """Full pipeline: MetaClaw safety check → MaxMillion pre-dispatch → ZeroClaw narration."""
     # Step 1: MetaClaw kill switch
@@ -242,6 +255,12 @@ def pipeline(user_msg: str) -> str:
     if not allowed:
         log.warning(f"[BLOCKED] {user_msg[:80]}")
         return f"🛑 {verdict}"
+
+    # Step 1b: Plandex routing — messages prefixed with "plandex:" go to Pi
+    if user_msg.lower().startswith("plandex:"):
+        query = user_msg[8:].strip()
+        log.info(f"[Plandex] routing to Pi: {query[:80]}")
+        return ask_plandex(query)
 
     # Step 2: MaxMillion pre-dispatch — call the real API before ZeroClaw sees the message
     intent = _detect_maxmillion_intent(user_msg)
