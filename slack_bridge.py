@@ -61,7 +61,8 @@ ZEROCLAW_WEBHOOK = "http://127.0.0.1:42617/webhook"
 ZEROCLAW_TOKEN   = os.environ.get("ZEROCLAW_TOKEN", "")
 MAXMILLION_URL   = os.environ.get("MAXMILLION_URL", "http://127.0.0.1:8082")
 PLANDEX_URL      = os.environ.get("PLANDEX_URL", "http://10.0.0.144:8090/ask")
-LEGAL_AGENT_URL  = os.environ.get("LEGAL_AGENT_URL", "http://127.0.0.1:8086")
+LEGAL_AGENT_URL   = os.environ.get("LEGAL_AGENT_URL",   "http://127.0.0.1:8086")
+VOLTAGE_AGENT_URL = os.environ.get("VOLTAGE_AGENT_URL", "http://127.0.0.1:8088")
 # ─────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
@@ -285,6 +286,37 @@ def ask_plandex(user_msg: str) -> str:
         return f"Plandex (Pi) is unreachable: {e}"
 
 
+def ask_legal(user_msg: str) -> str:
+    """Forward legal question to Skyp_the_Bot legal agent."""
+    try:
+        with httpx.Client(timeout=120) as client:
+            resp = client.post(f"{LEGAL_AGENT_URL}/ask", json={"question": user_msg})
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("answer") or data.get("response") or "No response from legal agent."
+    except Exception as e:
+        log.warning(f"[Legal] unreachable: {e}")
+        return f"Legal agent (Skyp_the_Bot) is unreachable: {e}"
+
+
+def ask_voltage(user_msg: str) -> str:
+    """Forward hardware/voltage question to Voltage Agent (Jetson tegrastats)."""
+    try:
+        with httpx.Client(timeout=30) as client:
+            # If no question, just return the live summary
+            if not user_msg or user_msg.lower() in ("status", "metrics", "stats"):
+                resp = client.get(f"{VOLTAGE_AGENT_URL}/summary")
+                resp.raise_for_status()
+                return resp.json().get("summary", str(resp.json()))
+            resp = client.post(f"{VOLTAGE_AGENT_URL}/ask", json={"question": user_msg})
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("response") or "No response from voltage agent."
+    except Exception as e:
+        log.warning(f"[Voltage] unreachable: {e}")
+        return f"Voltage agent is unreachable: {e}"
+
+
 # ── Memory helpers ────────────────────────────────────────────────────────────
 
 def _mem_save(role: str, content: str, channel: str = "") -> None:
@@ -336,15 +368,32 @@ def pipeline(user_msg: str, channel: str = "") -> str:
         _mem_save("bot", reply, channel)
         return reply
 
-    # Step 1b: Plandex routing — messages prefixed with "plandex:" go to Pi
-    if user_msg.lower().startswith("tax:"):
+    # Step 1b: prefix routing — "tax:", "legal:", "voltage:", "plandex:" shortcuts
+    lower_msg = user_msg.lower()
+
+    if lower_msg.startswith("tax:"):
         query = user_msg[4:].strip()
         log.info(f"[Tax] routing to Skyp Tax Agent: {query[:80]}")
         reply = ask_tax(query)
         _mem_save("bot", reply, channel)
         return reply
 
-    if user_msg.lower().startswith("plandex:"):
+    if lower_msg.startswith("legal:"):
+        query = user_msg[6:].strip()
+        log.info(f"[Legal] routing to Skyp_the_Bot: {query[:80]}")
+        reply = ask_legal(query)
+        _mem_save("bot", reply, channel)
+        return reply
+
+    if lower_msg.startswith("voltage:") or lower_msg.startswith("jetson:"):
+        prefix_len = 8 if lower_msg.startswith("voltage:") else 7
+        query = user_msg[prefix_len:].strip()
+        log.info(f"[Voltage] routing to Voltage Agent: {query[:80]}")
+        reply = ask_voltage(query)
+        _mem_save("bot", reply, channel)
+        return reply
+
+    if lower_msg.startswith("plandex:"):
         query = user_msg[8:].strip()
         log.info(f"[Plandex] routing to Pi: {query[:80]}")
         reply = ask_plandex(query)
