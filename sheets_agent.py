@@ -533,8 +533,8 @@ async def skill_descriptor():
     """
     return {
         "name":        "sheets_portfolio",
-        "version":     "1.0.0",
-        "description": "Reads crypto portfolio data from Google Sheets for ZeroClaw/MaxMillion",
+        "version":     "2.0.0",
+        "description": "Read/write crypto portfolio data via Google Sheets for ZeroClaw/MaxMillion",
         "base_url":    f"http://127.0.0.1:{PORT}",
         "endpoints": [
             {
@@ -552,6 +552,31 @@ async def skill_descriptor():
                 "method":      "POST",
                 "description": "Detail for a specific coin. Body: {symbol: 'BTC'}",
                 "body_schema": {"symbol": "string (e.g. BTC, ETH, SOL)"},
+            },
+            {
+                "path":        "/update_sheet",
+                "method":      "POST",
+                "description": "Called by MaxMillion after each trade. Appends a row to 'Trade Log' tab.",
+                "body_schema": {
+                    "trade_id": "string",
+                    "symbol":   "string (e.g. BTC/USDT)",
+                    "side":     "string (buy|sell)",
+                    "qty":      "float",
+                    "fill_price": "float",
+                    "pnl_tick": "float",
+                    "balance":  "float",
+                    "ts":       "string (ISO-8601)",
+                },
+            },
+            {
+                "path":        "/find_or_update_holding",
+                "method":      "POST",
+                "description": "Update a coin's Amount/Value row in the holdings tab, or append it.",
+                "body_schema": {
+                    "symbol":    "string (e.g. BTC)",
+                    "amount":    "float",
+                    "value_usd": "float (optional)",
+                },
             },
         ],
     }
@@ -581,6 +606,400 @@ async def push_to_maxmillion():
             status_code=503,
             detail="MaxMillion is not reachable at http://127.0.0.1:8082",
         )
+
+
+# ── Write auth helper ─────────────────────────────────────────────────────────
+# All write operations need a read+write OAuth token from the service account.
+# We cache it for up to 55 minutes to avoid hammering Google's token endpoint.
+
+_write_token_cache: dict[str, Any] = {"token": None, "expires_at": 0.0}
+
+
+async def _get_write_token() -> str:
+    """
+    Return a valid Google OAuth2 bearer token with read+write spreadsheet scope.
+    Uses the cached token if it is still valid; otherwise fetches a fresh one.
+
+    Raises FileNotFoundError if the service account JSON does not exist.
+    Raises ImportError  if neither google-auth nor cryptography is installed.
+    Raises HTTPException(503) if the token exchange with Google fails.
+    """
+    now = time.time()
+    if _write_token_cache["token"] and now < _write_token_cache["expires_at"]:
+        return _write_token_cache["token"]
+
+    sa    = _load_service_account()
+    token = _build_jwt(sa, write=True)
+
+    # google-auth returns the bearer token directly; the crypto fallback returns
+    # a raw JWT that must be exchanged at the token endpoint.
+    if len(token.split(".")) == 3:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                    "assertion":  token,
+                },
+            )
+        if r.status_code != 200:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Google token exchange failed ({r.status_code}): {r.text}",
+            )
+        access_token = r.json()["access_token"]
+    else:
+        access_token = token
+
+    # Cache for 55 minutes (tokens are valid for 60 min; keep 5-min buffer)
+    _write_token_cache["token"]      = access_token
+    _write_token_cache["expires_at"] = now + 55 * 60
+    return access_token
+
+
+# ── Sheet-write helpers ───────────────────────────────────────────────────────
+
+async def _sheet_append(tab_name: str, rows: list[list]) -> dict:
+    """
+    Append one or more rows to *tab_name* using the Sheets API append method.
+    The range notation "TabName" tells Google to find the first empty row after
+    existing data automatically.
+
+    Returns the raw JSON response from the Sheets API.
+    Raises HTTPException(503) on auth failure.
+    Raises httpx.HTTPStatusError on any non-2xx from Sheets.
+    """
+    token = await _get_write_token()
+    url   = f"{SHEETS_API}/{SHEET_ID}/values/{tab_name}:append"
+    body  = {
+        "range":          tab_name,
+        "majorDimension": "ROWS",
+        "values":         rows,
+    }
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            params={
+                "valueInputOption":        "USER_ENTERED",
+                "insertDataOption":        "INSERT_ROWS",
+                "includeValuesInResponse": "false",
+            },
+            json=body,
+        )
+    r.raise_for_status()
+    return r.json()
+
+
+async def _sheet_get_tab_values(tab_name: str) -> list[list]:
+    """
+    Read all values from *tab_name* using the Sheets API.
+    Returns a list-of-lists (rows x columns), empty list if tab is empty.
+    Uses the write token (read+write scope covers read as well).
+    """
+    token = await _get_write_token()
+    url   = f"{SHEETS_API}/{SHEET_ID}/values/{tab_name}"
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.get(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            params={"majorDimension": "ROWS"},
+        )
+    if r.status_code == 400:
+        # Tab does not exist yet — treat as empty
+        return []
+    r.raise_for_status()
+    return r.json().get("values", [])
+
+
+async def _sheet_update_cell(cell_range: str, value: Any) -> dict:
+    """
+    Overwrite a single cell (e.g. "Holdings!C3") with *value*.
+    Returns the raw JSON response from the Sheets API.
+    """
+    token = await _get_write_token()
+    url   = f"{SHEETS_API}/{SHEET_ID}/values/{cell_range}"
+    body  = {
+        "range":          cell_range,
+        "majorDimension": "ROWS",
+        "values":         [[value]],
+    }
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.put(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            params={"valueInputOption": "USER_ENTERED"},
+            json=body,
+        )
+    r.raise_for_status()
+    return r.json()
+
+
+async def _ensure_trade_log_header() -> None:
+    """
+    Make sure the Trade Log tab exists and has the correct header row.
+    If the tab is empty (or does not exist), the header is written first so
+    every subsequent append lands in the right columns.
+    """
+    try:
+        values = await _sheet_get_tab_values(TRADE_LOG_TAB)
+        if not values:
+            await _sheet_append(TRADE_LOG_TAB, [TRADE_LOG_COLS])
+            log.info("Trade Log header row written.")
+    except Exception as exc:
+        # Non-fatal — trade rows will still append, just without a header.
+        log.warning("Could not ensure Trade Log header: %s", exc)
+
+
+# ── Write models ──────────────────────────────────────────────────────────────
+
+class TradeRecord(BaseModel):
+    """
+    The payload MaxMillion POSTs to /update_sheet after every trade.
+    All fields map directly to the TRADE_LOG_COLS columns.
+    """
+    trade_id:   str
+    symbol:     str
+    side:       str
+    qty:        float
+    fill_price: float
+    pnl_tick:   float
+    balance:    float
+    ts:         str   # ISO-8601 timestamp
+
+
+class HoldingUpdate(BaseModel):
+    """
+    The payload for /find_or_update_holding.
+    Updates an existing holdings row or appends a new one.
+    """
+    symbol:    str
+    amount:    float
+    value_usd: float | None = None
+
+
+# ── Write endpoints ───────────────────────────────────────────────────────────
+
+@app.post("/update_sheet")
+async def update_sheet(trade: TradeRecord):
+    """
+    Called by MaxMillion after every mock trade.
+
+    Appends one row to the 'Trade Log' tab with all trade details.
+    If the tab is empty, a header row is written first.
+
+    The service account must have *Editor* access to the spreadsheet.
+    Set GOOGLE_SERVICE_ACCOUNT_JSON (or place the JSON at ~/maxmillion/service_account.json).
+
+    Returns:
+        {
+          "status":  "appended",
+          "tab":     "Trade Log",
+          "row":     [...],        # the values that were written
+          "api_response": {...}    # raw Sheets API response
+        }
+    """
+    row_values = [
+        trade.trade_id,
+        trade.symbol,
+        trade.side.upper(),
+        trade.qty,
+        trade.fill_price,
+        trade.pnl_tick,
+        trade.balance,
+        trade.ts,
+    ]
+
+    try:
+        await _ensure_trade_log_header()
+        api_resp = await _sheet_append(TRADE_LOG_TAB, [row_values])
+        log.info(
+            "Trade %s logged to sheet tab '%s' (%s %s)",
+            trade.trade_id, TRADE_LOG_TAB, trade.side, trade.symbol,
+        )
+        # Bust the read cache so /portfolio reflects the new state promptly
+        _cache["ts"] = 0.0
+        return {
+            "status":       "appended",
+            "tab":          TRADE_LOG_TAB,
+            "row":          row_values,
+            "api_response": api_resp,
+        }
+    except FileNotFoundError as exc:
+        log.error("Service account missing: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Service account JSON not found. "
+                f"Place it at {SA_JSON} or set GOOGLE_SERVICE_ACCOUNT_JSON. "
+                "The service account must have Editor access to the sheet."
+            ),
+        )
+    except ImportError as exc:
+        log.error("Auth library missing: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+        )
+    except httpx.HTTPStatusError as exc:
+        log.error("Sheets API error: %s %s", exc.response.status_code, exc.response.text)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Google Sheets API returned {exc.response.status_code}: {exc.response.text}",
+        )
+    except Exception as exc:
+        log.error("Unexpected write error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/find_or_update_holding")
+async def find_or_update_holding(update: HoldingUpdate):
+    """
+    Update the holdings section of the sheet for a specific coin.
+
+    Strategy:
+      1. Read the first tab (Sheet1) as a list of rows.
+      2. Scan for a row whose symbol column matches *update.symbol*.
+      3. If found — overwrite the Amount and (optionally) Value cells in place.
+      4. If not found — append a new row at the bottom with Symbol, Amount, Value.
+
+    Column detection uses the same fuzzy header matching as /portfolio.
+
+    Returns:
+        {
+          "action":  "updated" | "appended",
+          "symbol":  "BTC",
+          "row_index": 3,        # 1-based row number in the sheet (updated case)
+          "amount":  0.5,
+          "value_usd": 32500.0
+        }
+    """
+    target = update.symbol.strip().upper()
+
+    try:
+        tab    = "Sheet1"   # default first-tab name; adjust via SHEET_GID env
+        values = await _sheet_get_tab_values(tab)
+
+        if not values:
+            # Empty sheet — write a header then append the holding
+            header = ["Symbol", "Amount", "Value USD"]
+            await _sheet_append(tab, [header])
+            row_data = [target, update.amount, update.value_usd or ""]
+            await _sheet_append(tab, [row_data])
+            _cache["ts"] = 0.0
+            return {
+                "action":    "appended",
+                "symbol":    target,
+                "row_index": 2,
+                "amount":    update.amount,
+                "value_usd": update.value_usd,
+            }
+
+        headers = [str(h).strip().lower() for h in values[0]]
+
+        # Locate the symbol, amount, and value columns (1-based for Sheets API)
+        sym_candidates = ["symbol", "coin", "ticker", "asset", "currency", "name"]
+        amt_candidates = ["amount", "qty", "quantity", "balance", "holdings"]
+        val_candidates = ["value", "current_value", "usd_value", "total_value", "worth", "value usd"]
+
+        def _col_index(candidates: list[str]) -> int | None:
+            for c in candidates:
+                if c.lower() in headers:
+                    return headers.index(c.lower()) + 1   # 1-based
+            return None
+
+        sym_col_idx = _col_index(sym_candidates)
+        amt_col_idx = _col_index(amt_candidates)
+        val_col_idx = _col_index(val_candidates)
+
+        if sym_col_idx is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Cannot identify a symbol/coin column in the sheet. "
+                    f"Detected headers: {list(values[0])}"
+                ),
+            )
+
+        # Search for an existing row for this symbol (rows are 1-based; row 1 = header)
+        def _col_letter(idx: int) -> str:
+            """Convert 1-based column index to A-Z / AA-AZ letter(s)."""
+            result = ""
+            while idx > 0:
+                idx, rem = divmod(idx - 1, 26)
+                result   = chr(65 + rem) + result
+            return result
+
+        found_row = None
+        for row_idx, row in enumerate(values[1:], start=2):   # start=2: skip header
+            if len(row) >= sym_col_idx:
+                cell_val = str(row[sym_col_idx - 1]).strip().upper()
+                if cell_val == target:
+                    found_row = row_idx
+                    break
+
+        if found_row is not None:
+            # Update amount cell in place
+            if amt_col_idx:
+                amt_cell = f"{tab}!{_col_letter(amt_col_idx)}{found_row}"
+                await _sheet_update_cell(amt_cell, update.amount)
+            # Update value cell in place (if column exists and value provided)
+            if val_col_idx and update.value_usd is not None:
+                val_cell = f"{tab}!{_col_letter(val_col_idx)}{found_row}"
+                await _sheet_update_cell(val_cell, update.value_usd)
+
+            log.info(
+                "Updated holding %s at row %d (amt=%.6f val=%s)",
+                target, found_row, update.amount, update.value_usd,
+            )
+            _cache["ts"] = 0.0
+            return {
+                "action":    "updated",
+                "symbol":    target,
+                "row_index": found_row,
+                "amount":    update.amount,
+                "value_usd": update.value_usd,
+            }
+        else:
+            # Symbol not in sheet — append a new row
+            new_row: list[Any] = [""] * len(headers)
+            new_row[sym_col_idx - 1] = target
+            if amt_col_idx:
+                new_row[amt_col_idx - 1] = update.amount
+            if val_col_idx and update.value_usd is not None:
+                new_row[val_col_idx - 1] = update.value_usd
+            await _sheet_append(tab, [new_row])
+
+            log.info("Appended new holding row for %s (amt=%.6f)", target, update.amount)
+            _cache["ts"] = 0.0
+            return {
+                "action":    "appended",
+                "symbol":    target,
+                "row_index": len(values) + 1,
+                "amount":    update.amount,
+                "value_usd": update.value_usd,
+            }
+
+    except HTTPException:
+        raise
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Service account JSON not found. "
+                f"Place it at {SA_JSON} or set GOOGLE_SERVICE_ACCOUNT_JSON."
+            ),
+        )
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Google Sheets API returned {exc.response.status_code}: {exc.response.text}",
+        )
+    except Exception as exc:
+        log.error("find_or_update_holding error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────

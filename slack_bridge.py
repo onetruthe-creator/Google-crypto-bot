@@ -272,28 +272,76 @@ def ask_plandex(user_msg: str) -> str:
         return f"Plandex (Pi) is unreachable: {e}"
 
 
-def pipeline(user_msg: str) -> str:
-    """Full pipeline: MetaClaw safety check → MaxMillion pre-dispatch → ZeroClaw narration."""
+# ── Memory helpers ────────────────────────────────────────────────────────────
+
+def _mem_save(role: str, content: str, channel: str = "") -> None:
+    """
+    Write one message to the SQLite memory notebook.
+    Silently skips if memory is unavailable so the bot never crashes over this.
+    """
+    if _MEMORY_OK and _mem:
+        try:
+            _mem.save_message(role, content, channel)
+        except Exception as exc:
+            log.warning(f"[memory] save_message failed: {exc}")
+
+
+def _mem_context(channel: str = "", limit: int = 10) -> str:
+    """
+    Return the last `limit` messages as a compact text block so ZeroClaw
+    can see recent context and avoid repeating itself.
+
+    Returns an empty string when memory is unavailable.
+    """
+    if not (_MEMORY_OK and _mem):
+        return ""
+    try:
+        history = _mem.get_history(limit=limit, channel=channel)
+        if not history:
+            return ""
+        lines = [f"[{m['role']}] {m['content']}" for m in history]
+        return "[RECENT_MEMORY]\n" + "\n".join(lines) + "\n[/RECENT_MEMORY]\n\n"
+    except Exception as exc:
+        log.warning(f"[memory] get_history failed: {exc}")
+        return ""
+
+
+def pipeline(user_msg: str, channel: str = "") -> str:
+    """
+    Full pipeline:
+      Memory save → MetaClaw safety check → MaxMillion pre-dispatch
+      → ZeroClaw narration → memory save reply
+    """
+    # Step 0: Remember what the user said
+    _mem_save("user", user_msg, channel)
+
     # Step 1: MetaClaw kill switch
     allowed, verdict = metaclaw_safety_check(user_msg)
     if not allowed:
         log.warning(f"[BLOCKED] {user_msg[:80]}")
-        return f"🛑 {verdict}"
+        reply = f"🛑 {verdict}"
+        _mem_save("bot", reply, channel)
+        return reply
 
     # Step 1b: Plandex routing — messages prefixed with "plandex:" go to Pi
     if user_msg.lower().startswith("plandex:"):
         query = user_msg[8:].strip()
         log.info(f"[Plandex] routing to Pi: {query[:80]}")
-        return ask_plandex(query)
+        reply = ask_plandex(query)
+        _mem_save("bot", reply, channel)
+        return reply
 
     # Step 2: MaxMillion pre-dispatch — call the real API before ZeroClaw sees the message
     intent = _detect_maxmillion_intent(user_msg)
-    prompt_to_zeroclaw = user_msg  # default: pass through unchanged
+    # Prepend recent memory context so ZeroClaw remembers the conversation
+    context_block  = _mem_context(channel=channel, limit=10)
+    prompt_to_zeroclaw = context_block + user_msg  # default: context + user message
 
     if intent:
         try:
             mm_data = call_maxmillion(intent, user_msg)
-            prompt_to_zeroclaw = build_enriched_prompt(user_msg, mm_data)
+            enriched = build_enriched_prompt(user_msg, mm_data)
+            prompt_to_zeroclaw = context_block + enriched
             log.info(f"[MaxMillion] pre-dispatch OK intent={intent}")
         except httpx.HTTPStatusError as e:
             log.warning(f"[MaxMillion] HTTP {e.response.status_code} — checking kill switch state")
@@ -303,28 +351,43 @@ def pipeline(user_msg: str) -> str:
                     ks = e.response.json().get("detail") or e.response.text
                 except Exception:
                     ks = str(e)
-                return f"Trading halted — MaxMillion kill switch is active: {ks}"
+                reply = f"Trading halted — MaxMillion kill switch is active: {ks}"
+                _mem_save("bot", reply, channel)
+                return reply
             # Other HTTP errors: fall through to ZeroClaw without pre-dispatch data
             log.warning("[MaxMillion] Falling through to ZeroClaw without pre-dispatch data")
         except Exception as e:
             log.warning(f"[MaxMillion] Unreachable ({e}) — falling through to ZeroClaw")
             # MaxMillion is down: let ZeroClaw respond with an error explanation
-            prompt_to_zeroclaw = (
+            mm_error_block = (
                 f"[MAXMILLION_DATA]\nError: MaxMillion trading server is unreachable "
                 f"({e}). Do not invent trade data.\n[/MAXMILLION_DATA]\n\n"
                 f"User request: {user_msg}"
             )
+            prompt_to_zeroclaw = context_block + mm_error_block
 
     # Step 3: ZeroClaw narrates the result (enriched prompt contains real API data)
     log.info(f"[APPROVED] routing to ZeroClaw intent={intent or 'none'}: {user_msg[:60]}")
-    return run_zeroclaw(prompt_to_zeroclaw)
+    reply = run_zeroclaw(prompt_to_zeroclaw)
+
+    # Step 3b: If ZeroClaw returned a raw tool-call JSON blob, execute it
+    if _TOOLS_OK and _extract_tool:
+        tool_result = _extract_tool(reply)
+        if tool_result:
+            log.info("[tools] ZeroClaw returned a tool call — executed and replacing reply")
+            reply = tool_result
+
+    # Step 4: Remember the bot's reply
+    _mem_save("bot", reply, channel)
+    return reply
 
 
 # ── Slack handlers ────────────────────────────────────────────────────────────
 
 @app.event("app_mention")
 def handle_mention(event, say):
-    text = event.get("text", "")
+    text    = event.get("text", "")
+    channel = event.get("channel", "")
     if "<@" in text:
         text = text.split(">", 1)[-1].strip()
 
@@ -335,7 +398,7 @@ def handle_mention(event, say):
 
     log.info(f"[mention] {text[:120]}")
     say("⏳ Processing...")
-    say(pipeline(text))
+    say(pipeline(text, channel=channel))
 
 
 @app.event("message")
@@ -345,7 +408,8 @@ def handle_dm(event, say):
     if event.get("channel_type") != "im":
         return
 
-    text = event.get("text", "").strip()
+    text    = event.get("text", "").strip()
+    channel = event.get("channel", "")
     if not text:
         return
 
@@ -356,7 +420,7 @@ def handle_dm(event, say):
 
     log.info(f"[dm] {text[:120]}")
     say("⏳ Processing...")
-    say(pipeline(text))
+    say(pipeline(text, channel=channel))
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
