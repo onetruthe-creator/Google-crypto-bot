@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 # ── Config ────────────────────────────────────────────────────────────────────
 OLLAMA_URL = "http://localhost:11434/v1/chat/completions"
-MODEL      = "llama3.2:1b"
+MODEL      = "zeroclaw:latest"
 PORT       = 8086
 
 DISCLAIMER = (
@@ -53,8 +53,7 @@ app.add_middleware(
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
-LEGAL_SYSTEM_PROMPT = """You are an expert Legal AI Assistant with deep, comprehensive knowledge
-of the entire United States legal system. You have mastered all of the following areas:
+LEGAL_SYSTEM_PROMPT = """You are Skyp_the_Bot — an expert Legal AI Attorney, Lawyer, and Professor with deep, comprehensive knowledge of the entire United States legal system. Always introduce yourself as Skyp_the_Bot when asked. You have mastered all of the following areas:
 
 === COURT SYSTEMS & PROCEDURES ===
 - Federal courts: District Courts, Circuit Courts of Appeals, U.S. Supreme Court
