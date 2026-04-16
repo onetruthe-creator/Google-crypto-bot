@@ -14,13 +14,26 @@ Strategy:
   2. Fall back to Google Sheets API v4 with service account JSON
      (set env var GOOGLE_SERVICE_ACCOUNT_JSON to the path of your JSON key)
 
-Endpoints:
+Endpoints (READ):
   GET  /portfolio        — all holdings (symbol, amount, value, …)
   GET  /summary          — total value, top holdings, PnL if present
   POST /analyze          — { "symbol": "BTC" } → row(s) for that coin
   GET  /health           — liveness probe
 
+Endpoints (WRITE — called by MaxMillion after each trade):
+  POST /update_sheet     — append a completed trade row to the sheet
+                           body: {trade_id, symbol, side, qty, fill_price,
+                                  pnl_tick, balance, ts}
+
+  POST /find_or_update_holding  — update the Amount/Value cell for a coin if
+                                  it already exists in the holdings section,
+                                  or append a new row if not found.
+                           body: {symbol, amount, value_usd}
+
 Cache TTL: 60 seconds
+
+Writing requires the Google Sheets API (read+write scope).
+The service account must have Editor access to the sheet.
 """
 
 import csv
@@ -55,6 +68,16 @@ PORT       = 8083
 
 ZEROCLAW   = "http://127.0.0.1:3001"
 MAXMILLION = "http://127.0.0.1:8082"
+
+# ── Sheet layout for the trade-log tab ───────────────────────────────────────
+# sheets_agent will look for (or create) a tab called "Trade Log".
+# The first row is treated as a header row.  When MaxMillion posts a trade,
+# a new row is appended to that tab with the columns below.
+TRADE_LOG_TAB  = os.environ.get("TRADE_LOG_TAB", "Trade Log")
+TRADE_LOG_COLS = [
+    "Trade ID", "Symbol", "Side", "Qty",
+    "Fill Price", "PnL Tick", "Balance USDT", "Timestamp",
+]
 # ─────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
@@ -143,12 +166,22 @@ def _load_service_account() -> dict:
         return json.load(fh)
 
 
-def _build_jwt(sa: dict) -> str:
-    """Mint a signed JWT for the Google OAuth2 token endpoint."""
+def _build_jwt(sa: dict, write: bool = False) -> str:
+    """
+    Mint a signed JWT for the Google OAuth2 token endpoint.
+
+    Args:
+        sa:    Service account dict loaded from JSON key file.
+        write: If True, request read+write scope instead of read-only.
+               You must pass write=True when calling any sheets write API.
+    """
     import base64
-    import hashlib
-    import hmac
-    import struct
+
+    scope = (
+        "https://www.googleapis.com/auth/spreadsheets"
+        if write else
+        "https://www.googleapis.com/auth/spreadsheets.readonly"
+    )
 
     # We need cryptography or google-auth; try google-auth first.
     try:
@@ -157,7 +190,7 @@ def _build_jwt(sa: dict) -> str:
 
         creds = service_account.Credentials.from_service_account_info(
             sa,
-            scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"],
+            scopes=[scope],
         )
         creds.refresh(GARequest())
         return creds.token
@@ -177,7 +210,7 @@ def _build_jwt(sa: dict) -> str:
         now     = int(_time.time())
         payload = b64url(json.dumps({
             "iss":   sa["client_email"],
-            "scope": "https://www.googleapis.com/auth/spreadsheets.readonly",
+            "scope": scope,
             "aud":   "https://oauth2.googleapis.com/token",
             "exp":   now + 3600,
             "iat":   now,

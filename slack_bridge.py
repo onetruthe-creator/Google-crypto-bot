@@ -26,6 +26,29 @@ import httpx
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
+# ── Memory + tool imports ─────────────────────────────────────────────────────
+# Import gracefully so the bridge still starts even if memory.py has a
+# transient error (e.g. disk full).  Both modules live in the same folder.
+try:
+    from memory import mem as _mem
+    _MEMORY_OK = True
+except Exception as _mem_err:
+    logging.getLogger(__name__).warning(
+        f"[memory] could not import memory module: {_mem_err}"
+    )
+    _mem    = None
+    _MEMORY_OK = False
+
+try:
+    from tools import extract_and_run_tool_from_text as _extract_tool
+    _TOOLS_OK = True
+except Exception as _tools_err:
+    logging.getLogger(__name__).warning(
+        f"[tools] could not import tools module: {_tools_err}"
+    )
+    _extract_tool = None
+    _TOOLS_OK = False
+
 # ── Config ────────────────────────────────────────────────────────────────────
 SLACK_BOT_TOKEN  = os.environ.get("SLACK_BOT_TOKEN", "xoxb-REPLACE_ME")
 SLACK_APP_TOKEN  = os.environ.get("SLACK_APP_TOKEN", "xapp-REPLACE_ME")

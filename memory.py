@@ -188,6 +188,65 @@ class Memory:
             for row in raw
         ]
 
+    def search_messages(self, keyword: str, limit: int = 20) -> list[dict]:
+        """
+        Search past messages for a keyword (case-insensitive).
+
+        Useful for the agent to recall what was said about a topic.
+
+        Parameters
+        ----------
+        keyword : word or phrase to search for (SQL LIKE pattern, so % works too)
+        limit   : max results to return
+
+        Example
+        -------
+        results = mem.search_messages("bitcoin")
+        """
+        pattern = f"%{keyword}%"
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, role, content, channel, ts
+                FROM messages
+                WHERE content LIKE ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (pattern, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_messages(self) -> int:
+        """Return total number of messages stored."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(*) AS n FROM messages").fetchone()
+        return row["n"]
+
+    def prune_messages(self, keep: int = 500) -> int:
+        """
+        Delete old messages so the database stays small.
+        Keeps the most recent `keep` messages and deletes the rest.
+
+        Returns how many rows were deleted.
+
+        Example
+        -------
+        deleted = mem.prune_messages(keep=500)
+        print(f"Cleaned up {deleted} old messages.")
+        """
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                DELETE FROM messages
+                WHERE id NOT IN (
+                    SELECT id FROM messages ORDER BY id DESC LIMIT ?
+                )
+                """,
+                (keep,),
+            )
+            return cur.rowcount
+
     # ── Trade methods ─────────────────────────────────────────────────────────
 
     def save_trade(
@@ -331,6 +390,17 @@ class Memory:
             "symbols_traded":  [r["symbol"] for r in symbols],
         }
 
+    def get_latest_balance(self) -> float:
+        """
+        Return the account balance from the most recent trade row.
+        Returns 0.0 if no trades have been recorded yet.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT balance FROM trades ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        return row["balance"] if row else 0.0
+
 
 # ── Module-level singleton (optional convenience) ─────────────────────────────
 # Other files can just do:
@@ -360,6 +430,10 @@ if __name__ == "__main__":
     for msg in m.get_history(limit=5):
         print(f"  [{msg['role']:4s}] {msg['content']}")
 
+    print("\n--- Search for 'balance' ---")
+    for msg in m.search_messages("balance", limit=3):
+        print(f"  [{msg['role']:4s}] {msg['content'][:60]}")
+
     print("\n--- Last 5 trades ---")
     for t in m.get_trades(limit=5):
         sign = "+" if t["pnl_tick"] >= 0 else ""
@@ -370,5 +444,8 @@ if __name__ == "__main__":
     s = m.get_trade_summary()
     for k, v in s.items():
         print(f"  {k}: {v}")
+
+    print(f"\n--- Latest balance: ${m.get_latest_balance():,.2f} ---")
+    print(f"--- Total messages stored: {m.count_messages()} ---")
 
     print("\nSelf-test passed.")
