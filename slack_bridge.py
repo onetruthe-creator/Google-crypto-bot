@@ -260,6 +260,19 @@ def ask_metaclaw_direct(user_msg: str) -> str:
         return f"MetaClaw error: {e}"
 
 
+def ask_tax(user_msg: str) -> str:
+    """Forward tax question to Skyp Tax Agent."""
+    try:
+        with httpx.Client(timeout=60) as client:
+            resp = client.post(f"{os.environ.get('TAX_AGENT_URL', 'http://127.0.0.1:8087')}/ask",
+                               json={"question": user_msg})
+            resp.raise_for_status()
+            return resp.json().get("response") or "No response from tax agent."
+    except Exception as e:
+        log.warning(f"[Tax] unreachable: {e}")
+        return f"Tax agent unreachable: {e}"
+
+
 def ask_plandex(user_msg: str) -> str:
     """Forward message to Plandex on Raspberry Pi."""
     try:
@@ -324,6 +337,13 @@ def pipeline(user_msg: str, channel: str = "") -> str:
         return reply
 
     # Step 1b: Plandex routing — messages prefixed with "plandex:" go to Pi
+    if user_msg.lower().startswith("tax:"):
+        query = user_msg[4:].strip()
+        log.info(f"[Tax] routing to Skyp Tax Agent: {query[:80]}")
+        reply = ask_tax(query)
+        _mem_save("bot", reply, channel)
+        return reply
+
     if user_msg.lower().startswith("plandex:"):
         query = user_msg[8:].strip()
         log.info(f"[Plandex] routing to Pi: {query[:80]}")
