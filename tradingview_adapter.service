@@ -1,0 +1,15 @@
+[Unit]
+Description=TradingView → MaxMillion Adapter (port 8085)
+After=network.target
+
+[Service]
+Type=simple
+User=damon
+WorkingDirectory=/home/damon/Google-crypto-bot
+ExecStart=/usr/bin/python3 /home/damon/Google-crypto-bot/tradingview_adapter.py
+Restart=on-failure
+RestartSec=5
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=multi-user.target

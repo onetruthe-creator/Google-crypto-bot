@@ -38,6 +38,7 @@ ZEROCLAW_WEBHOOK = "http://127.0.0.1:42617/webhook"
 ZEROCLAW_TOKEN   = os.environ.get("ZEROCLAW_TOKEN", "")
 MAXMILLION_URL   = os.environ.get("MAXMILLION_URL", "http://127.0.0.1:8082")
 PLANDEX_URL      = os.environ.get("PLANDEX_URL", "http://10.0.0.144:8090/ask")
+LEGAL_AGENT_URL  = os.environ.get("LEGAL_AGENT_URL", "http://127.0.0.1:8086")
 # ─────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
