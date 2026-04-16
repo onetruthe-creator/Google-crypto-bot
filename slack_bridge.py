@@ -57,12 +57,13 @@ MODEL            = "zeroclaw:latest"
 METACLAW_BASE    = "http://127.0.0.1:30000/v1"
 ZEROCLAW_BIN     = os.path.expanduser("~/.cargo/bin/zeroclaw")
 SKILLS_DIR       = os.path.expanduser("~/.zeroclaw/workspace/skills")
-ZEROCLAW_WEBHOOK = "http://127.0.0.1:42617/webhook"
-ZEROCLAW_TOKEN   = os.environ.get("ZEROCLAW_TOKEN", "")
-MAXMILLION_URL   = os.environ.get("MAXMILLION_URL", "http://127.0.0.1:8082")
-PLANDEX_URL      = os.environ.get("PLANDEX_URL", "http://10.0.0.144:8090/ask")
+ZEROCLAW_WEBHOOK  = "http://127.0.0.1:42617/webhook"
+ZEROCLAW_TOKEN    = os.environ.get("ZEROCLAW_TOKEN", "")
+MAXMILLION_URL    = os.environ.get("MAXMILLION_URL",    "http://127.0.0.1:8082")
+PLANDEX_URL       = os.environ.get("PLANDEX_URL",       "http://10.0.0.144:8090/ask")
 LEGAL_AGENT_URL   = os.environ.get("LEGAL_AGENT_URL",   "http://127.0.0.1:8086")
 VOLTAGE_AGENT_URL = os.environ.get("VOLTAGE_AGENT_URL", "http://127.0.0.1:8088")
+SKILL_ROUTER_URL  = os.environ.get("SKILL_ROUTER_URL",  "http://127.0.0.1:8089")
 # ─────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
@@ -317,6 +318,36 @@ def ask_voltage(user_msg: str) -> str:
         return f"Voltage agent is unreachable: {e}"
 
 
+def ask_skill(skill_name: str, user_msg: str) -> str:
+    """
+    Route to the ZeroClaw Universal Skill Router.
+    skill_name = "" means auto-pick the best skill.
+    """
+    try:
+        with httpx.Client(timeout=120) as client:
+            if skill_name:
+                resp = client.post(f"{SKILL_ROUTER_URL}/ask",
+                                   json={"skill": skill_name, "question": user_msg})
+            else:
+                resp = client.post(f"{SKILL_ROUTER_URL}/ask/auto",
+                                   json={"question": user_msg})
+            resp.raise_for_status()
+            data = resp.json()
+            skill_used = data.get("skill") or data.get("skill_chosen") or skill_name
+            answer     = data.get("response") or "No response from skill router."
+            return f"*[{skill_used}]* {answer}"
+    except httpx.HTTPStatusError as e:
+        try:
+            detail = e.response.json().get("detail", e.response.text)
+        except Exception:
+            detail = e.response.text
+        log.warning(f"[Skill] HTTP {e.response.status_code}: {detail}")
+        return f"Skill router error: {detail}"
+    except Exception as e:
+        log.warning(f"[Skill] unreachable: {e}")
+        return f"Skill router is unreachable: {e}"
+
+
 # ── Memory helpers ────────────────────────────────────────────────────────────
 
 def _mem_save(role: str, content: str, channel: str = "") -> None:
@@ -397,6 +428,22 @@ def pipeline(user_msg: str, channel: str = "") -> str:
         query = user_msg[8:].strip()
         log.info(f"[Plandex] routing to Pi: {query[:80]}")
         reply = ask_plandex(query)
+        _mem_save("bot", reply, channel)
+        return reply
+
+    # "skill: <skill-name>: <question>"  OR  "skill: <question>"  (auto-select)
+    if lower_msg.startswith("skill:"):
+        rest = user_msg[6:].strip()
+        # Check for second colon → explicit skill name provided
+        if ":" in rest:
+            skill_name, question = rest.split(":", 1)
+            skill_name = skill_name.strip().lower()
+            question   = question.strip()
+        else:
+            skill_name = ""   # auto-detect
+            question   = rest
+        log.info(f"[Skill] routing skill={skill_name or 'auto'}: {question[:80]}")
+        reply = ask_skill(skill_name, question)
         _mem_save("bot", reply, channel)
         return reply
 
