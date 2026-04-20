@@ -289,7 +289,7 @@ def call_ollama(
         "model": OLLAMA_MODEL,
         "prompt": full_prompt,
         "stream": False,
-        "options": {"num_predict": max_tokens, "temperature": 0.7},
+        "options": {"num_predict": max_tokens, "temperature": 0.7, "num_gpu": 1},
     }
     t0 = time.time()
     try:
