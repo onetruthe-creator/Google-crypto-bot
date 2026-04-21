@@ -1002,6 +1002,145 @@ async def find_or_update_holding(update: HoldingUpdate):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+# ── CoinGecko price sync ──────────────────────────────────────────────────────
+
+# Maps ticker symbol → CoinGecko ID
+COINGECKO_IDS: dict[str, str] = {
+    "BTC":   "bitcoin",
+    "ETH":   "ethereum",
+    "SOL":   "solana",
+    "BNB":   "binancecoin",
+    "DOGE":  "dogecoin",
+    "ADA":   "cardano",
+    "XRP":   "ripple",
+    "AVAX":  "avalanche-2",
+    "MATIC": "matic-network",
+    "DOT":   "polkadot",
+    "LINK":  "chainlink",
+    "LTC":   "litecoin",
+    "UNI":   "uniswap",
+    "ATOM":  "cosmos",
+    "TRX":   "tron",
+    "NEAR":  "near",
+    "APT":   "aptos",
+    "OP":    "optimism",
+    "ARB":   "arbitrum",
+    "SUI":   "sui",
+}
+
+COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price"
+
+
+async def fetch_prices(symbols: list[str]) -> dict[str, float]:
+    """Fetch current USD prices for a list of ticker symbols via CoinGecko."""
+    ids_needed = {}
+    for sym in symbols:
+        clean = sym.upper().replace("/USDT", "").replace("/USD", "").strip()
+        cg_id = COINGECKO_IDS.get(clean)
+        if cg_id:
+            ids_needed[clean] = cg_id
+
+    if not ids_needed:
+        return {}
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(COINGECKO_URL, params={
+                "ids":           ",".join(ids_needed.values()),
+                "vs_currencies": "usd",
+            })
+            r.raise_for_status()
+            data = r.json()
+
+        prices: dict[str, float] = {}
+        for sym, cg_id in ids_needed.items():
+            if cg_id in data and "usd" in data[cg_id]:
+                prices[sym] = data[cg_id]["usd"]
+        return prices
+    except Exception as e:
+        log.warning(f"CoinGecko fetch failed: {e}")
+        return {}
+
+
+@app.post("/sync_prices")
+async def sync_prices():
+    """
+    Fetch live prices from CoinGecko and update each holding's Value column
+    in the Google Sheet. Requires service account with Editor access.
+
+    Returns a summary of what was updated.
+    """
+    rows = await get_rows(force=True)
+    if not rows:
+        raise HTTPException(status_code=404, detail="No data found in sheet.")
+
+    sym_col = _symbol_col(rows)
+    amt_col = _amount_col(rows)
+    if not sym_col:
+        raise HTTPException(status_code=422,
+                            detail="Cannot find a symbol column in the sheet.")
+
+    # Collect all unique symbols
+    symbols = list({str(r.get(sym_col, "")).upper().strip()
+                    for r in rows if r.get(sym_col)})
+    log.info(f"[sync_prices] fetching prices for: {symbols}")
+
+    prices = await fetch_prices(symbols)
+    if not prices:
+        raise HTTPException(status_code=503,
+                            detail="CoinGecko returned no prices. Try again in a moment.")
+
+    updated = []
+    skipped = []
+
+    for row in rows:
+        sym = str(row.get(sym_col, "")).upper().strip()
+        clean = sym.replace("/USDT", "").replace("/USD", "")
+        price = prices.get(clean)
+        if price is None:
+            skipped.append(sym)
+            continue
+
+        amount = _to_float(row.get(amt_col)) if amt_col else None
+        value  = round(price * amount, 2) if amount else None
+
+        try:
+            await find_or_update_holding(HoldingUpdate(
+                symbol=clean, amount=amount or 0.0, value_usd=value
+            ))
+            updated.append({
+                "symbol":    clean,
+                "price_usd": price,
+                "amount":    amount,
+                "value_usd": value,
+            })
+        except Exception as e:
+            log.warning(f"[sync_prices] failed to update {sym}: {e}")
+            skipped.append(sym)
+
+    _cache["ts"] = 0.0   # bust cache
+    log.info(f"[sync_prices] updated={len(updated)} skipped={len(skipped)}")
+    return {
+        "updated": updated,
+        "skipped": skipped,
+        "prices_fetched": prices,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+@app.get("/prices")
+async def get_prices():
+    """Return current market prices for all symbols found in the sheet."""
+    rows = await get_rows()
+    sym_col = _symbol_col(rows)
+    if not sym_col:
+        raise HTTPException(status_code=422, detail="No symbol column found.")
+    symbols = list({str(r.get(sym_col, "")).upper().strip()
+                    for r in rows if r.get(sym_col)})
+    prices = await fetch_prices(symbols)
+    return {"prices": prices, "symbols_checked": symbols}
+
+
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

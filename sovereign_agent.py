@@ -76,6 +76,7 @@ MODEL      = "zeroclaw:latest"
 # Autonomous monitor intervals (seconds)
 HEALTH_INTERVAL     = 60
 HARDWARE_INTERVAL   = 300
+PRICE_SYNC_INTERVAL = 900    # 15 min — sync CoinGecko prices to Google Sheet
 PORTFOLIO_INTERVAL  = 1800
 TAX_INTERVAL        = 21600
 DIGEST_INTERVAL     = 86400
@@ -293,6 +294,18 @@ async def monitor_hardware():
             log.warning(f"[hardware monitor] error: {e}")
 
 
+async def monitor_price_sync():
+    """Every 15min — fetch live prices from CoinGecko and update Google Sheet."""
+    while True:
+        await asyncio.sleep(PRICE_SYNC_INTERVAL)
+        try:
+            result = await _post(f"{AGENTS['sheets']}/sync_prices", {})
+            updated = result.get("updated", [])
+            log.info(f"[price sync] updated {len(updated)} holdings in sheet")
+        except Exception as e:
+            log.warning(f"[price sync] error: {e}")
+
+
 async def monitor_portfolio():
     """Every 30min — snapshot portfolio, report big PnL changes."""
     while True:
@@ -385,6 +398,7 @@ async def startup():
     log.info("Sovereign Agent starting — launching autonomous monitors")
     asyncio.create_task(monitor_health())
     asyncio.create_task(monitor_hardware())
+    asyncio.create_task(monitor_price_sync())
     asyncio.create_task(monitor_portfolio())
     asyncio.create_task(monitor_tax())
     asyncio.create_task(daily_digest())
