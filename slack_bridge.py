@@ -64,6 +64,7 @@ PLANDEX_URL       = os.environ.get("PLANDEX_URL",       "http://10.0.0.144:8090/
 LEGAL_AGENT_URL   = os.environ.get("LEGAL_AGENT_URL",   "http://127.0.0.1:8086")
 VOLTAGE_AGENT_URL = os.environ.get("VOLTAGE_AGENT_URL", "http://127.0.0.1:8088")
 SKILL_ROUTER_URL  = os.environ.get("SKILL_ROUTER_URL",  "http://127.0.0.1:8089")
+SOVEREIGN_URL     = os.environ.get("SOVEREIGN_URL",     "http://127.0.0.1:8090")
 # ─────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
@@ -348,6 +349,19 @@ def ask_skill(skill_name: str, user_msg: str) -> str:
         return f"Skill router is unreachable: {e}"
 
 
+def ask_sovereign(user_msg: str) -> str:
+    """Send a complex multi-agent question to the Sovereign orchestrator."""
+    try:
+        with httpx.Client(timeout=120) as client:
+            resp = client.post(f"{SOVEREIGN_URL}/ask", json={"question": user_msg})
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("answer") or str(data)
+    except Exception as e:
+        log.warning(f"[Sovereign] unreachable: {e}")
+        return f"Sovereign agent is unreachable: {e}"
+
+
 # ── Memory helpers ────────────────────────────────────────────────────────────
 
 def _mem_save(role: str, content: str, channel: str = "") -> None:
@@ -428,6 +442,14 @@ def pipeline(user_msg: str, channel: str = "") -> str:
         query = user_msg[8:].strip()
         log.info(f"[Plandex] routing to Pi: {query[:80]}")
         reply = ask_plandex(query)
+        _mem_save("bot", reply, channel)
+        return reply
+
+    # "sovereign: <question>" — master orchestrator handles complex multi-agent queries
+    if lower_msg.startswith("sovereign:"):
+        query = user_msg[10:].strip()
+        log.info(f"[Sovereign] routing: {query[:80]}")
+        reply = ask_sovereign(query)
         _mem_save("bot", reply, channel)
         return reply
 
