@@ -57,11 +57,14 @@ CSV_URL    = (
     f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
     f"/export?format=csv&gid={SHEET_GID}"
 )
-SHEETS_API = "https://sheets.googleapis.com/v4/spreadsheets"
-SA_JSON    = os.environ.get(
+SHEETS_API   = "https://sheets.googleapis.com/v4/spreadsheets"
+SA_JSON      = os.environ.get(
     "GOOGLE_SERVICE_ACCOUNT_JSON",
     str(Path.home() / "maxmillion" / "service_account.json"),
 )
+# Google Apps Script web-app URL (no service account needed — just paste the
+# script from the repo's docs into Extensions → Apps Script → Deploy as web app)
+SHEETS_WEBAPP_URL = os.environ.get("SHEETS_WEBAPP_URL", "")
 
 CACHE_TTL  = 60          # seconds
 PORT       = 8083
@@ -811,6 +814,16 @@ async def update_sheet(trade: TradeRecord):
     ]
 
     try:
+        # Fast path: Apps Script web app (no service account needed)
+        if SHEETS_WEBAPP_URL:
+            try:
+                result = await _webapp_append_trade(trade)
+                log.info("Trade %s logged via Apps Script", trade.trade_id)
+                return {"status": "appended", "tab": TRADE_LOG_TAB,
+                        "row": row_values, "api_response": result}
+            except Exception as exc:
+                log.warning("Apps Script append failed, falling back to API: %s", exc)
+
         await _ensure_trade_log_header()
         api_resp = await _sheet_append(TRADE_LOG_TAB, [row_values])
         log.info(
@@ -852,6 +865,40 @@ async def update_sheet(trade: TradeRecord):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+async def _webapp_update_holding(update: HoldingUpdate) -> dict:
+    """Write via Google Apps Script web app — no service account needed."""
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+        r = await client.post(SHEETS_WEBAPP_URL, json={
+            "action":    "update_holding",
+            "symbol":    update.symbol.upper(),
+            "amount":    update.amount,
+            "value_usd": update.value_usd,
+        })
+    r.raise_for_status()
+    result = r.json()
+    _cache["ts"] = 0.0
+    return result
+
+
+async def _webapp_append_trade(trade: "TradeRecord") -> dict:
+    """Append a trade row via Google Apps Script web app."""
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+        r = await client.post(SHEETS_WEBAPP_URL, json={
+            "action":     "append_trade",
+            "trade_id":   trade.trade_id,
+            "symbol":     trade.symbol,
+            "side":       trade.side,
+            "qty":        trade.qty,
+            "fill_price": trade.fill_price,
+            "pnl_tick":   trade.pnl_tick,
+            "balance":    trade.balance,
+            "ts":         trade.ts,
+        })
+    r.raise_for_status()
+    _cache["ts"] = 0.0
+    return r.json()
+
+
 @app.post("/find_or_update_holding")
 async def find_or_update_holding(update: HoldingUpdate):
     """
@@ -875,6 +922,13 @@ async def find_or_update_holding(update: HoldingUpdate):
         }
     """
     target = update.symbol.strip().upper()
+
+    # Fast path: use Apps Script web app if configured (no service account needed)
+    if SHEETS_WEBAPP_URL:
+        try:
+            return await _webapp_update_holding(update)
+        except Exception as exc:
+            log.warning("Apps Script write failed, falling back to API: %s", exc)
 
     try:
         tab    = "Sheet1"   # default first-tab name; adjust via SHEET_GID env
