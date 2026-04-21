@@ -1026,6 +1026,19 @@ COINGECKO_IDS: dict[str, str] = {
     "OP":    "optimism",
     "ARB":   "arbitrum",
     "SUI":   "sui",
+    "XLM":   "stellar",
+    "HBAR":  "hedera-hashgraph",
+    "ALGO":  "algorand",
+    "VET":   "vechain",
+    "SEI":   "sei-network",
+    "CSPR":  "casper-network",
+    "XDC":   "xdce-crowd-sale",
+    "SWFTC": "swftcoin",
+    "VELO":  "velo",
+    "XPR":   "proton",
+    "WLFI":  "world-liberty-financial",
+    "ZBCN":  "zebec-network",
+    "SNIPS": "snips",
 }
 
 COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price"
