@@ -1,0 +1,26 @@
+[Unit]
+Description=SOVEREIGN Slack Bot (Socket Mode)
+After=network-online.target sovereign.service metaclaw.service
+Wants=network-online.target
+
+[Service]
+User=damon
+WorkingDirectory=/home/damon/sovereign
+ExecStart=/usr/bin/python3 /home/damon/sovereign/sovereign_bot.py
+Restart=always
+RestartSec=10
+
+# Required Slack tokens — set these
+Environment=SLACK_BOT_TOKEN=xoxb-YOUR-BOT-TOKEN-HERE
+Environment=SLACK_APP_TOKEN=xapp-YOUR-APP-TOKEN-HERE
+
+# Point at your local SOVEREIGN + MetaClaw
+Environment=SOVEREIGN_URL=http://localhost:8888
+Environment=METACLAW_URL=http://localhost:5002
+Environment=SOVEREIGN_DIR=/home/damon/sovereign
+
+StandardOutput=append:/home/damon/sovereign/sovereign_bot.log
+StandardError=append:/home/damon/sovereign/sovereign_bot.log
+
+[Install]
+WantedBy=multi-user.target

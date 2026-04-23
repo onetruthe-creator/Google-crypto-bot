@@ -384,6 +384,51 @@ def inbound_event():
     return jsonify({"ok": True})
 
 
+@app.route("/chat", methods=["POST"])
+def chat():
+    data = request.json or {}
+    message = data.get("message", "").strip()
+    if not message:
+        return jsonify({"error": "message required"}), 400
+
+    try:
+        r = requests.post(
+            f"{METACLAW_URL}/reason",
+            json={"prompt": message, "domain": "orchestration"},
+            timeout=120,
+        )
+        result = r.json()
+        response_text = result.get("response", "")
+        if not response_text:
+            raise ValueError("empty response from MetaClaw")
+        log_event("SOVEREIGN", "chat_response", data={"chars": len(response_text)})
+        return jsonify({"response": response_text})
+    except Exception as exc:
+        log_event("SOVEREIGN", f"chat_error: {exc}", "ERROR")
+        return jsonify({"error": str(exc), "response": "Sirach, I cannot reach the decision engine right now."}), 502
+
+
+@app.route("/briefing")
+def briefing():
+    try:
+        r = requests.get(f"{METACLAW_URL}/history", timeout=10)
+        history = r.json()
+        count = len(history) if isinstance(history, list) else 0
+        briefing_text = (
+            f"SOVEREIGN is online. MetaClaw has {count} reasoning entries in history. "
+            f"All sub-agents are monitored every {HEALTH_INTERVAL}s."
+        )
+    except Exception as exc:
+        briefing_text = f"SOVEREIGN online. MetaClaw unreachable: {exc}"
+    return jsonify({"briefing": briefing_text, "cached": False})
+
+
+@app.route("/clear", methods=["POST"])
+def clear_history():
+    log_event("SOVEREIGN", "history_cleared")
+    return jsonify({"status": "cleared"})
+
+
 @app.route("/dashboard")
 def dashboard():
     return render_template_string(_DASHBOARD_HTML)
