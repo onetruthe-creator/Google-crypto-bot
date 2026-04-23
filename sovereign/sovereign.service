@@ -1,0 +1,14 @@
+[Unit]
+Description=Sovereign Bot
+After=network.target
+
+[Service]
+User=damon
+WorkingDirectory=/home/damon/sovereign
+EnvironmentFile=/home/damon/sovereign/.env
+ExecStart=/usr/bin/python3 /home/damon/sovereign/sovereign_bot.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
