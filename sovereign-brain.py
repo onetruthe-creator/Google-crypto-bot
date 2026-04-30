@@ -29,7 +29,7 @@ from flask import Flask, jsonify, request
 
 PORT = 5002
 TIMEZONE = ZoneInfo("America/Denver")
-BASE_DIR = Path(os.getenv("SOVEREIGN_DIR", "/home/damon/sovereign"))
+BASE_DIR = Path(os.getenv("SOVEREIGN_DIR", str(Path.home() / "sovereign")))
 LOG_PATH = BASE_DIR / "metaclaw.log"
 DB_PATH = BASE_DIR / "metaclaw.db"
 

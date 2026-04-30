@@ -24,7 +24,7 @@ from flask import Flask, jsonify, request
 
 PORT = 5003
 TIMEZONE = ZoneInfo("America/Denver")
-BASE_DIR = Path(os.getenv("SOVEREIGN_DIR", "/home/damon/sovereign"))
+BASE_DIR = Path(os.getenv("SOVEREIGN_DIR", str(Path.home() / "sovereign")))
 LOG_PATH = BASE_DIR / "slack_bridge.log"
 
 SOVEREIGN_URL = os.getenv("SOVEREIGN_URL", "http://localhost:8888")

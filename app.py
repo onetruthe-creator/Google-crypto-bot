@@ -28,7 +28,7 @@ from flask import Flask, jsonify, render_template_string, request
 
 PORT = 8888
 TIMEZONE = ZoneInfo("America/Denver")
-BASE_DIR = Path(os.getenv("SOVEREIGN_DIR", "/home/damon/sovereign"))
+BASE_DIR = Path(os.getenv("SOVEREIGN_DIR", str(Path.home() / "sovereign")))
 DB_PATH = BASE_DIR / "sovereign.db"
 LOG_PATH = BASE_DIR / "sovereign.log"
 

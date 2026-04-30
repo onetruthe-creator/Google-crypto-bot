@@ -27,20 +27,27 @@ from flask import Flask, jsonify, request
 
 PORT = 5001
 TIMEZONE = ZoneInfo("America/Denver")
-BASE_DIR = Path(os.getenv("SOVEREIGN_DIR", "/home/damon/sovereign"))
+BASE_DIR = Path(os.getenv("SOVEREIGN_DIR", str(Path.home() / "sovereign")))
 LOG_PATH = BASE_DIR / "zeroclaw.log"
 
 SOVEREIGN_URL = os.getenv("SOVEREIGN_URL", "http://localhost:8888")
 METACLAW_URL = os.getenv("METACLAW_URL", "http://localhost:5002")
 COMMAND_TIMEOUT = int(os.getenv("ZEROCLAW_TIMEOUT", "60"))
 MAX_TASK_HISTORY = 100
+IS_WINDOWS = os.name == "nt"
 
 # Commands permitted to run — extend deliberately, never wildcard
-ALLOWED_COMMANDS = frozenset({
+_LINUX_COMMANDS = frozenset({
     "cat", "curl", "df", "du", "free", "git", "grep", "head",
     "journalctl", "ls", "pip", "pip3", "ps", "python3",
     "systemctl", "tail", "top", "wc",
 })
+_WINDOWS_COMMANDS = frozenset({
+    "curl", "dir", "findstr", "git", "ipconfig", "more",
+    "pip", "pip3", "python", "python3", "systeminfo",
+    "tasklist", "type", "where", "wmic",
+})
+ALLOWED_COMMANDS = _WINDOWS_COMMANDS if IS_WINDOWS else _LINUX_COMMANDS
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -65,9 +72,10 @@ def is_safe_command(cmd: str) -> tuple[bool, str]:
     if not parts:
         return False, "empty command"
     base = Path(parts[0]).name
-    if base not in ALLOWED_COMMANDS:
+    # Strip .exe suffix on Windows for allowlist lookup
+    base_no_ext = base.lower().removesuffix(".exe")
+    if base_no_ext not in ALLOWED_COMMANDS and base not in ALLOWED_COMMANDS:
         return False, f"'{base}' not in allowlist"
-    # Block shell metacharacters that could enable injection
     dangerous = (";", "&&", "||", "`", "$(", ">", "<", "|", "\\n")
     if any(d in cmd for d in dangerous):
         return False, f"shell metacharacter detected in: {cmd[:60]}"
@@ -81,7 +89,8 @@ def run_command(cmd: str, timeout: int = COMMAND_TIMEOUT) -> Dict:
         return {"success": False, "error": f"Command blocked: {reason}"}
     try:
         proc = subprocess.run(
-            cmd.split(),          # no shell=True — avoids injection
+            cmd if IS_WINDOWS else cmd.split(),
+            shell=IS_WINDOWS,
             capture_output=True,
             text=True,
             timeout=timeout,
