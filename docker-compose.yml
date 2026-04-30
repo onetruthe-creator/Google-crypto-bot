@@ -1,0 +1,106 @@
+# SOVEREIGN — Docker Compose
+# Two networks:
+#   internal  — no internet access (agents, brain, executor, ollama)
+#   external  — internet access (slack bot only)
+#
+# Usage:
+#   1. Copy .env.example to .env and fill in your Slack tokens
+#   2. docker compose up -d
+#   3. docker compose exec ollama ollama pull llama3.2:1b  (first run only)
+
+networks:
+  internal:
+    internal: true   # no outbound internet — agents stay sandboxed
+  external:          # only slack_bot joins this
+
+volumes:
+  sovereign_data:    # logs, sqlite db, memory
+  ollama_data:       # downloaded models
+
+services:
+
+  # ── Ollama (local LLM) ────────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: sovereign_ollama
+    networks: [internal]
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/api/tags"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── ZeroClaw (executor) ───────────────────────────────────────────────────
+  zeroclaw:
+    build: .
+    container_name: sovereign_zeroclaw
+    command: python sovereign-executor.py
+    networks: [internal]
+    volumes:
+      - sovereign_data:/data/sovereign
+    environment:
+      SOVEREIGN_DIR: /data/sovereign
+      SOVEREIGN_URL: http://sovereign:8888
+      METACLAW_URL:  http://metaclaw:5002
+    restart: unless-stopped
+    depends_on:
+      - ollama
+
+  # ── MetaClaw (brain) ──────────────────────────────────────────────────────
+  metaclaw:
+    build: .
+    container_name: sovereign_metaclaw
+    command: python sovereign-brain.py
+    networks: [internal]
+    volumes:
+      - sovereign_data:/data/sovereign
+    environment:
+      SOVEREIGN_DIR: /data/sovereign
+      SOVEREIGN_URL: http://sovereign:8888
+      ZEROCLAW_URL:  http://zeroclaw:5001
+      OLLAMA_URL:    http://ollama:11434/api/generate
+      OLLAMA_MODEL:  ${OLLAMA_MODEL:-llama3.2:1b}
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  # ── SOVEREIGN (orchestrator) ──────────────────────────────────────────────
+  sovereign:
+    build: .
+    container_name: sovereign_core
+    command: python app.py
+    networks: [internal]
+    volumes:
+      - sovereign_data:/data/sovereign
+    environment:
+      SOVEREIGN_DIR:    /data/sovereign
+      METACLAW_URL:     http://metaclaw:5002
+      ZEROCLAW_URL:     http://zeroclaw:5001
+      SLACK_BRIDGE_URL: http://slack_bridge:5003
+    restart: unless-stopped
+    depends_on:
+      - metaclaw
+      - zeroclaw
+
+  # ── Slack Bot (Socket Mode — only service with internet) ──────────────────
+  slack_bot:
+    build: .
+    container_name: sovereign_slack
+    command: python sovereign_bot.py
+    networks: [internal, external]
+    volumes:
+      - sovereign_data:/data/sovereign
+    environment:
+      SOVEREIGN_DIR:   /data/sovereign
+      SOVEREIGN_URL:   http://sovereign:8888
+      METACLAW_URL:    http://metaclaw:5002
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}
+    restart: unless-stopped
+    depends_on:
+      - sovereign
