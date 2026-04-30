@@ -33,13 +33,9 @@ DB_PATH = BASE_DIR / "sovereign.db"
 LOG_PATH = BASE_DIR / "sovereign.log"
 
 METACLAW_URL = os.getenv("METACLAW_URL", "http://localhost:5002")
-ZEROCLAW_URL = os.getenv("ZEROCLAW_URL", "http://localhost:5001")
-SLACK_BRIDGE_URL = os.getenv("SLACK_BRIDGE_URL", "http://localhost:5003")
 
 AGENT_URLS: Dict[str, str] = {
     "metaclaw": METACLAW_URL,
-    "zeroclaw": ZEROCLAW_URL,
-    "slack_bridge": SLACK_BRIDGE_URL,
 }
 
 HEALTH_INTERVAL = int(os.getenv("HEALTH_INTERVAL", "30"))
@@ -174,8 +170,6 @@ def health_monitor() -> None:
 
 _ROUTE_MAP: List[tuple] = [
     ({"reason", "plan", "think", "analyze", "decide", "strategize", "brainstorm"}, "metaclaw"),
-    ({"run", "execute", "bash", "command", "script", "deploy", "install", "restart"}, "zeroclaw"),
-    ({"slack", "message", "notify", "alert", "send", "post"}, "slack_bridge"),
 ]
 
 
