@@ -1,0 +1,2 @@
+Date,Instrument,Direction,Strategy/Setup,Entry Price,Stop Price,Target Price,Position Size,Dollar Risk ($),Risk % of Account,Exit Price,Exit Date,PnL ($),PnL (%),R-Multiple,Followed Rules? (Y/N),Emotion Before,Emotion During,Mistakes Made,Lessons Learned,Screenshot/Chart Link
+2026-08-19,EXAMPLE/USD,long,MA Pullback,50.00,48.00,54.00,10,20.00,1.0,54.00,2026-08-20,40.00,4.0,2.0,Y,Calm,Calm,None,"Textbook setup, followed plan exactly",
