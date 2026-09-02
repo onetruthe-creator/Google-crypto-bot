@@ -6,7 +6,7 @@ from typing import Any
 _DEFAULT: dict = {
     "workspace": str(Path.home() / ".openclaw" / "workspace"),
     "bitunix": {
-        "base_url": "https://fapi.bitunix.com",
+        "base_url": "https://fapi.bitunix.com",  # official futures REST base
         "watchlist_size": 20,
         "timeout_seconds": 10,
     },
