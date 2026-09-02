@@ -1,0 +1,23 @@
+workspace: /home/owner/.openclaw/workspace
+
+bitunix:
+  base_url: https://fapi.bitunix.com
+  watchlist_size: 20
+  timeout_seconds: 10
+
+detector:
+  kline_interval: "1h"
+  kline_limit: 100
+  swing_lookback: 5
+  breakout_volume_multiplier: 1.5
+  retest_tolerance_pct: 0.5
+  rejection_min_move_pct: 0.3
+
+gates:
+  rsi_period: 14
+  rsi_max: 75
+  min_volume_usdt: 1000000
+
+notifier:
+  output_file: ""       # defaults to workspace/ladybug_alerts.jsonl
+  webhook_url: ""       # optional: ntfy.sh topic or other webhook
