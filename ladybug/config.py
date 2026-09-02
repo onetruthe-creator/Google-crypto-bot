@@ -16,6 +16,7 @@ _DEFAULT: dict = {
         "swing_lookback": 5,
         "breakout_volume_multiplier": 1.5,
         "retest_tolerance_pct": 0.5,
+        "retest_min_distance_pct": 0.5,
         "rejection_min_move_pct": 0.3,
     },
     "gates": {

@@ -11,6 +11,7 @@ detector:
   swing_lookback: 5
   breakout_volume_multiplier: 1.5
   retest_tolerance_pct: 0.5
+  retest_min_distance_pct: 0.5   # price must move this far above level before retest counts
   rejection_min_move_pct: 0.3
 
 gates:
