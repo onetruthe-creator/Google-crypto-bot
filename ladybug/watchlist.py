@@ -2,33 +2,19 @@ from __future__ import annotations
 import json
 from datetime import date, datetime
 from pathlib import Path
-from .bitunix_client import BitunixClient
+from .bitunix_client import BitunixReadOnlyClient
 from .config import Config
 
 
-def _vol(ticker: dict) -> float:
-    for k in ("quoteVolume", "quote_volume", "volume24h", "vol24h", "vol", "volume"):
-        v = ticker.get(k)
-        if v is not None:
-            try:
-                return float(v)
-            except (ValueError, TypeError):
-                pass
-    return 0.0
-
-
-def _sym(ticker: dict) -> str:
-    return str(ticker.get("symbol", ticker.get("instId", "")))
-
-
-def build_watchlist(client: BitunixClient, cfg: Config) -> list[str]:
-    tickers = client.get_tickers()
-    min_vol = cfg["gates"]["min_volume_usdt"]
+def build_watchlist(client: BitunixReadOnlyClient, cfg: Config) -> list[str]:
+    min_vol = float(cfg["gates"]["min_volume_usdt"])
     size = cfg["bitunix"]["watchlist_size"]
-    candidates = [(_sym(t), _vol(t)) for t in tickers if _sym(t).endswith("USDT")]
-    filtered = [(sym, vol) for sym, vol in candidates if vol >= min_vol]
-    filtered.sort(key=lambda x: x[1], reverse=True)
-    return [sym for sym, _ in filtered[:size]]
+
+    tickers = client.tickers()
+    usdt_pairs = [t for t in tickers if t.symbol.endswith("USDT")]
+    liquid = [t for t in usdt_pairs if float(t.quote_volume) >= min_vol]
+    liquid.sort(key=lambda t: float(t.quote_volume), reverse=True)
+    return [t.symbol for t in liquid[:size]]
 
 
 def save_watchlist(symbols: list[str], path: Path) -> None:

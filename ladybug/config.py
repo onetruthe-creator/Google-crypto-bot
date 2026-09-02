@@ -11,7 +11,7 @@ _DEFAULT: dict = {
         "timeout_seconds": 10,
     },
     "detector": {
-        "kline_interval": "1h",
+        "kline_interval": "15m",
         "kline_limit": 100,
         "swing_lookback": 5,
         "breakout_volume_multiplier": 1.5,
