@@ -221,7 +221,12 @@ BitunixClient = BitunixReadOnlyClient
 
 
 def _interval_to_ms(interval: str) -> int:
-    units = {"m": 60_000, "h": 3_600_000, "d": 86_400_000, "w": 604_800_000}
+    units = {
+        "m": 60_000, "M": 60_000,
+        "h": 3_600_000, "H": 3_600_000,
+        "d": 86_400_000, "D": 86_400_000,
+        "w": 604_800_000, "W": 604_800_000,
+    }
     for suffix, ms in units.items():
         if interval.endswith(suffix):
             try:
