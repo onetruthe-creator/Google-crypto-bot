@@ -5,11 +5,12 @@ Patch bitunix_market_scout.py to wire in ladybug_retest_detector.
 Changes applied
 ---------------
 1. Add 6 new Optional fields to DeepSetup after quote_volume_24h.
-2. Inject import for detect_retest after the last sovereign_mission_engine import.
-3. After ``atr = _atr_pct(candles)`` in analyze_symbol(), add the retest
-   detection call and ATR price computation.
-4. Extend the DeepSetup(**) constructor call with the new fields, anchored
-   on ``quote_volume_24h=``.
+2. Inject ``from sovereign_mission_engine.ladybug_retest_detector import detect_retest``
+   after the last top-level import in the file.
+3. Insert the retest detection call and _atr_15m_price computation
+   immediately BEFORE the ``return DeepSetup(...)`` statement.
+4. Add the 6 new keyword arguments inside the DeepSetup(...) constructor
+   call, just before its closing parenthesis.
 
 Usage
 -----
@@ -39,14 +40,11 @@ from pathlib import Path
 
 ALREADY_MARKER = "ladybug_retest_detector"
 
-# ── Anchor patterns ────────────────────────────────────────────────────────────
-
-# 1. DeepSetup field insertion point: after `    quote_volume_24h: float = 0.0`
-DEEPSETUP_FIELD_ANCHOR = re.compile(
-    r'([ \t]+quote_volume_24h\s*:\s*float\s*=\s*0\.0\s*\n)',
-    re.MULTILINE,
+IMPORT_INJECTION = (
+    "from sovereign_mission_engine.ladybug_retest_detector import detect_retest\n"
 )
-DEEPSETUP_FIELD_INSERTION = (
+
+DEEPSETUP_FIELD_SUFFIX = (
     "    breakout_level_price: Optional[float] = None\n"
     "    retest_zone_low: Optional[float] = None\n"
     "    retest_zone_high: Optional[float] = None\n"
@@ -55,20 +53,7 @@ DEEPSETUP_FIELD_INSERTION = (
     "    atr_15m_price: Optional[float] = None\n"
 )
 
-# 2. Import injection: after the last line matching `from sovereign_mission_engine...`
-SME_IMPORT_RE = re.compile(
-    r'^(from sovereign_mission_engine\.[^\n]+)\n',
-    re.MULTILINE,
-)
-IMPORT_INJECTION = (
-    "from sovereign_mission_engine.ladybug_retest_detector import detect_retest\n"
-)
-
-# 3. Retest call: after `atr = _atr_pct(candles)`
-ATR_ANCHOR = re.compile(
-    r'([ \t]+atr\s*=\s*_atr_pct\(candles\)\s*\n)',
-    re.MULTILINE,
-)
+# Inserted BEFORE `return DeepSetup(` — note {indent} placeholder.
 RETEST_CALL_TEMPLATE = (
     "{indent}_retest = detect_retest(\n"
     "{indent}    candles, direction=direction, last_price=last, atr_pct=atr\n"
@@ -76,12 +61,8 @@ RETEST_CALL_TEMPLATE = (
     "{indent}_atr_15m_price = last * (atr / 100.0)\n"
 )
 
-# 4. Constructor: extend `quote_volume_24h=<expr>,` inside DeepSetup(...)
-CONSTRUCTOR_ANCHOR = re.compile(
-    r'([ \t]+quote_volume_24h\s*=\s*[^\n,]+,\s*\n)',
-    re.MULTILINE,
-)
-CONSTRUCTOR_INSERTION = (
+# Inserted just before the closing `)` of the DeepSetup(...) call.
+CONSTRUCTOR_SUFFIX = (
     "        breakout_level_price=_retest.breakout_level_price,\n"
     "        retest_zone_low=_retest.retest_zone_low,\n"
     "        retest_zone_high=_retest.retest_zone_high,\n"
@@ -90,129 +71,187 @@ CONSTRUCTOR_INSERTION = (
     "        atr_15m_price=_atr_15m_price,\n"
 )
 
+# ── Patterns ────────────────────────────────────────────────────────────────────
 
-# ── Optional[...] import guard ──────────────────────────────────────────────────
+# DeepSetup dataclass field insertion anchor.
+DEEPSETUP_FIELD_ANCHOR = re.compile(
+    r'([ \t]+quote_volume_24h\s*:\s*float\s*=\s*0\.0[ \t]*\n)',
+    re.MULTILINE,
+)
+
+# `return DeepSetup(` — used to anchor both the retest call and the constructor.
+DEEPSETUP_RETURN_RE = re.compile(
+    r'([ \t]+)(return\s+DeepSetup\()',
+    re.MULTILINE,
+)
+
+# Top-level import lines (no leading whitespace).
+TOP_IMPORT_RE = re.compile(
+    r'^((?:from|import)\s+[^\n]+)\n',
+    re.MULTILINE,
+)
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────────
+
+def _context_lines(src: str, keyword: str, radius: int = 2) -> str:
+    lines = src.splitlines()
+    hits = []
+    for i, l in enumerate(lines):
+        if keyword.lower() in l.lower():
+            snippet = "\n".join(
+                f"  {j+1:5d}: {lines[j]}"
+                for j in range(max(0, i - radius), min(len(lines), i + radius + 1))
+            )
+            hits.append(snippet)
+    return ("\n---\n".join(hits)) if hits else "  (none found)"
+
 
 def _ensure_optional_imported(src: str) -> str:
-    """Add Optional to the typing import if it isn't already there."""
-    if "Optional" in src:
-        return src  # already available
+    """Guarantee ``Optional`` is importable in the module."""
+    if re.search(r'\bOptional\b', src):
+        return src  # already present
 
-    # Try to extend an existing `from typing import ...` line.
+    # Extend an existing `from typing import ...` line.
     typing_re = re.compile(r'^(from typing import )([^\n]+)', re.MULTILINE)
     m = typing_re.search(src)
+    if m and "Optional" not in m.group(2):
+        return src[:m.start(2)] + "Optional, " + m.group(2) + src[m.end(2):]
     if m:
-        existing = m.group(2)
-        if "Optional" not in existing:
-            return src[:m.start(2)] + "Optional, " + existing + src[m.end(2):]
         return src
 
-    # No typing import — insert one at the top, after any __future__ import.
-    future_re = re.compile(r'^(from __future__ import[^\n]+\n)', re.MULTILINE)
-    fm = future_re.search(src)
-    if fm:
-        insert_at = fm.end()
-        return src[:insert_at] + "from typing import Optional\n" + src[insert_at:]
+    # No typing import at all — add one after any __future__ import.
+    future_m = re.search(r'^from __future__ import[^\n]+\n', src, re.MULTILINE)
+    if future_m:
+        p = future_m.end()
+        return src[:p] + "from typing import Optional\n" + src[p:]
 
-    # Fallback: insert at the very beginning.
+    # Last resort: prepend to file.
     return "from typing import Optional\n" + src
 
 
-# ── Patch ──────────────────────────────────────────────────────────────────────
+def _find_import_insertion_point(src: str) -> int:
+    """
+    Return the character position just AFTER the last top-level import line.
+    Preference order:
+      1. last ``from sovereign_mission_engine...`` line
+      2. last ``from bitunix_...`` line
+      3. last top-level ``from ...`` or ``import ...`` line
+    """
+    # Strategy 1 — SME imports
+    sme_re = re.compile(r'^from sovereign_mission_engine\.[^\n]+\n', re.MULTILINE)
+    matches = list(sme_re.finditer(src))
+    if matches:
+        return matches[-1].end()
 
-def _show_context(src: str, pattern: str) -> str:
-    lines = src.splitlines()
-    hits = [
-        f"  {i+1:4d}: {l}"
-        for i, l in enumerate(lines)
-        if pattern.lower() in l.lower()
-    ]
-    return "\n".join(hits) if hits else "  (none found)"
+    # Strategy 2 — bitunix_ imports
+    bx_re = re.compile(r'^from bitunix_[^\n]+\n', re.MULTILINE)
+    matches = list(bx_re.finditer(src))
+    if matches:
+        return matches[-1].end()
 
+    # Strategy 3 — any top-level import
+    matches = list(TOP_IMPORT_RE.finditer(src))
+    if matches:
+        return matches[-1].end()
+
+    return -1
+
+
+def _find_deepsetup_return(src: str):
+    """Return the re.Match for the first ``return DeepSetup(`` statement."""
+    return DEEPSETUP_RETURN_RE.search(src)
+
+
+def _find_constructor_close(src: str, open_pos: int) -> int:
+    """
+    Starting from open_pos (the character AFTER the opening ``(`` of DeepSetup),
+    find the matching closing ``)`` and return its index in src.
+    """
+    depth = 1
+    i = open_pos
+    while i < len(src) and depth > 0:
+        ch = src[i]
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+        i += 1
+    return i - 1  # position of the matching `)`
+
+
+# ── Main patch logic ──────────────────────────────────────────────────────────────
 
 def patch(src: str) -> tuple[str, str]:
-    """Apply all four changes. Returns (patched_src, summary_str)."""
+    """Apply all four changes. Returns (patched_src, human_readable_summary)."""
     if ALREADY_MARKER in src:
         raise RuntimeError(
-            f"Already patched: {ALREADY_MARKER!r} already present in target."
+            f"Already patched: {ALREADY_MARKER!r} found in target."
         )
 
     changes: list[str] = []
 
-    # ── 1. Optional import guard ──────────────────────────────────────────────
+    # ── 0. Ensure Optional is importable ─────────────────────────────────────
     src = _ensure_optional_imported(src)
 
-    # ── 2. DeepSetup fields ───────────────────────────────────────────────────
+    # ── 1. DeepSetup field additions ─────────────────────────────────────────
     m1 = DEEPSETUP_FIELD_ANCHOR.search(src)
     if m1 is None:
-        lines_ctx = _show_context(src, "quote_volume_24h")
+        ctx = _context_lines(src, "quote_volume_24h")
         raise RuntimeError(
-            "Cannot find DeepSetup field anchor "
-            "(    quote_volume_24h: float = 0.0).\n"
-            f"Lines matching 'quote_volume_24h':\n{lines_ctx}"
+            "Cannot find DeepSetup field anchor (quote_volume_24h: float = 0.0).\n"
+            f"Context around 'quote_volume_24h':\n{ctx}"
         )
-    # Insert the new fields immediately after the matched line.
     pos = m1.end()
-    src = src[:pos] + DEEPSETUP_FIELD_INSERTION + src[pos:]
+    src = src[:pos] + DEEPSETUP_FIELD_SUFFIX + src[pos:]
     changes.append("DeepSetup fields (+6)")
 
-    # ── 3. Import injection ───────────────────────────────────────────────────
-    # Find the last SME import and insert our import after it.
-    all_matches = list(SME_IMPORT_RE.finditer(src))
-    if not all_matches:
+    # ── 2. Import injection ───────────────────────────────────────────────────
+    imp_pos = _find_import_insertion_point(src)
+    if imp_pos < 0:
         raise RuntimeError(
-            "Cannot find any 'from sovereign_mission_engine...' import in target."
+            "Cannot find any top-level import statement to anchor the "
+            "detect_retest import. Please add it manually:\n"
+            f"  {IMPORT_INJECTION.strip()}"
         )
-    last_m = all_matches[-1]
-    pos = last_m.end()
-    src = src[:pos] + IMPORT_INJECTION + src[pos:]
+    src = src[:imp_pos] + IMPORT_INJECTION + src[imp_pos:]
     changes.append("import detect_retest")
 
-    # ── 4. Retest detection call ──────────────────────────────────────────────
-    m3 = ATR_ANCHOR.search(src)
+    # ── 3. Retest call before `return DeepSetup(` ────────────────────────────
+    m3 = _find_deepsetup_return(src)
     if m3 is None:
-        lines_ctx = _show_context(src, "_atr_pct")
+        ctx = _context_lines(src, "DeepSetup")
         raise RuntimeError(
-            "Cannot find ATR anchor (atr = _atr_pct(candles)).\n"
-            f"Lines matching '_atr_pct':\n{lines_ctx}"
+            "Cannot find 'return DeepSetup(' in target.\n"
+            f"Context around 'DeepSetup':\n{ctx}"
         )
-    indent = re.match(r'([ \t]*)', m3.group(0)).group(1)
+    indent = m3.group(1)
     call_block = RETEST_CALL_TEMPLATE.format(indent=indent)
-    pos = m3.end()
-    src = src[:pos] + call_block + src[pos:]
+    insert_at = m3.start()
+    src = src[:insert_at] + call_block + src[insert_at:]
     changes.append("detect_retest() call + _atr_15m_price")
 
-    # ── 5. Constructor extension ───────────────────────────────────────────────
-    # We need the SECOND occurrence of `quote_volume_24h=` — the first is the
-    # class-field definition we just inserted (it has a colon), not the
-    # constructor keyword argument. We search for `quote_volume_24h=` WITHOUT
-    # a preceding colon to target the constructor call.
-    constructor_re = re.compile(
-        r'([ \t]+quote_volume_24h\s*=\s*[^\n,]+,[ \t]*\n)',
-        re.MULTILINE,
-    )
-    # The field definition has a colon before =, the constructor arg does not.
-    # Filter to the one that is NOT a type-annotation line.
-    ctor_match = None
-    for cm in constructor_re.finditer(src):
-        line = cm.group(0)
-        # Type-annotation lines look like `quote_volume_24h: float = 0.0`
-        # Constructor lines look like `quote_volume_24h=some_var,`
-        if ":" not in line.split("quote_volume_24h")[0].split("\n")[-1]:
-            ctor_match = cm
-            break  # take the first constructor-style match
-    if ctor_match is None:
-        lines_ctx = _show_context(src, "quote_volume_24h")
-        raise RuntimeError(
-            "Cannot find quote_volume_24h= constructor argument.\n"
-            f"Lines matching 'quote_volume_24h':\n{lines_ctx}"
-        )
-    pos = ctor_match.end()
-    src = src[:pos] + CONSTRUCTOR_INSERTION + src[pos:]
+    # ── 4. Constructor field additions ────────────────────────────────────────
+    # Re-find the (now-shifted) `return DeepSetup(` after the insertion above.
+    m4 = _find_deepsetup_return(src)
+    if m4 is None:
+        raise RuntimeError("Could not re-locate 'return DeepSetup(' after retest call insertion.")
+    # Position just after the opening `(`
+    open_paren_pos = m4.end()  # end() is one past the matched `(`
+    close_paren_pos = _find_constructor_close(src, open_paren_pos)
+
+    # Find the last non-whitespace character before the closing `)` to insert after.
+    before_close = src[:close_paren_pos].rstrip()
+    trailing = src[len(before_close):close_paren_pos]  # whitespace we'll restore
+
+    # Ensure there's a trailing comma on the last existing argument.
+    if before_close and not before_close.endswith(','):
+        src = before_close + ",\n" + CONSTRUCTOR_SUFFIX + trailing + src[close_paren_pos:]
+    else:
+        src = before_close + "\n" + CONSTRUCTOR_SUFFIX + trailing + src[close_paren_pos:]
     changes.append("DeepSetup constructor (+6 fields)")
 
-    summary = "; ".join(changes)
-    return src, summary
+    return src, "; ".join(changes)
 
 
 def _sha256(text: str) -> str:
