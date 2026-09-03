@@ -86,6 +86,12 @@ done
 echo "  $(sha256sum "${TARGET_PY}" | awk '{print $1}')  ${TARGET_PY} (patched)"
 echo "  $(sha256sum "${BACKUP_FILE}" | awk '{print $1}')  ${BACKUP_FILE} (backup)"
 
+# ── 6. Post-install validation ────────────────────────────────────────────────
+echo ""
+echo "[VALIDATE] Running post-install checks..."
+python3 "${SCRIPTS_SRC}/validate_executable_alerts.py" --workspace "${WORKSPACE}" \
+  || echo "[VALIDATE] Some checks failed — review output above."
+
 echo ""
 echo "=== Install complete ==="
 echo "Production delivery is DISABLED."

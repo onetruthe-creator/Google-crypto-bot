@@ -4,13 +4,14 @@ Patch script: integrate lb_executable_delivery into bitunix_trade_alerts.py.
 
 Changes applied
 ---------------
-1. Remove the direct Telegram relay call at the bottom of the scan loop:
-       relay("\n".join(lines))
-2. Add an import for try_deliver_executable.
-3. Add _try_executable_delivery() helper that maps selected-list tuples into
-   ExecutableSetupInput and calls try_deliver_executable() for each.
-4. Insert a call to _try_executable_delivery(selected, now=now) immediately
-   after the existing loop that builds the `selected` list.
+1. Replace the direct Telegram relay call (multi-line form):
+       relay(
+           "\\n".join(lines)
+       )
+   with:
+       _try_executable_delivery(selected, now=now)
+2. Add an import for try_deliver_executable after the bitunix_runtime import.
+3. Append _try_executable_delivery() helper at the end of the module.
 
 Usage
 -----
@@ -31,30 +32,29 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
 
-# ── Marker strings ────────────────────────────────────────────────────────────
-# Must be present in the target file for the patch to apply.
-OLD_RELAY_LINE = '    relay("\\n".join(lines))'
 ALREADY_MARKER = "try_deliver_executable"
 
-# ── Replacement for the relay call ───────────────────────────────────────────
-# The old relay call is removed and replaced by nothing —
-# the executable delivery is handled by _try_executable_delivery() below.
-OLD_RELAY_BLOCK = '    relay("\\n".join(lines))\n'
-NEW_RELAY_BLOCK = ""  # removed — executable delivery handled separately
+# Regex matches both single-line and multi-line forms of the relay call.
+# Single-line:  relay("\n".join(lines))
+# Multi-line :  relay(\n        "\n".join(lines)\n    )
+_RELAY_RE = re.compile(
+    r'(?P<indent>[ \t]*)relay\(\s*["\']\\n["\']\s*\.join\(\s*lines\s*\)\s*\)',
+    re.MULTILINE,
+)
 
-# ── Import injection ──────────────────────────────────────────────────────────
-IMPORT_ANCHOR = "from sovereign_mission_engine.bitunix_runtime import"
+IMPORT_ANCHOR_RE = re.compile(
+    r'^(from sovereign_mission_engine\.bitunix_runtime import[^\n]*)\n',
+    re.MULTILINE,
+)
 IMPORT_INJECTION = (
     "from sovereign_mission_engine.lb_executable_delivery import try_deliver_executable\n"
 )
 
-# ── Delivery helper + call ────────────────────────────────────────────────────
-# Appended at the end of the module (before the if __name__ == '__main__' guard
-# if present, otherwise at EOF).
 HELPER_CODE = '''
 
 # ---------------------------------------------------------------------------
@@ -133,11 +133,6 @@ def _try_executable_delivery(selected, *, now):
             )
 '''
 
-CALL_ANCHOR = "# End of scan loop"
-CALL_INJECTION = "    _try_executable_delivery(selected, now=now)\n"
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
@@ -145,8 +140,8 @@ def _sha256(text: str) -> str:
 
 def _find_target() -> Path:
     candidates = [
-        Path.home() / ".openclaw/workspace/scripts/bitunix_trade_alerts.py",
         Path.home() / ".openclaw/workspace/sovereign_mission_engine/bitunix_trade_alerts.py",
+        Path.home() / ".openclaw/workspace/scripts/bitunix_trade_alerts.py",
     ]
     for p in candidates:
         if p.exists():
@@ -156,50 +151,49 @@ def _find_target() -> Path:
     )
 
 
-def patch(src: str, dry_run: bool = False) -> tuple[str, str]:
+def _show_relay_lines(src: str) -> str:
+    """Return lines around relay( calls for diagnostic output."""
+    lines = src.splitlines()
+    hits = []
+    for i, line in enumerate(lines):
+        if "relay(" in line:
+            start = max(0, i - 1)
+            end = min(len(lines), i + 4)
+            snippet = "\n".join(f"{j+1:4d}: {lines[j]}" for j in range(start, end))
+            hits.append(snippet)
+    return "\n---\n".join(hits) if hits else "(no relay( calls found)"
+
+
+def patch(src: str) -> tuple[str, str]:
     """Apply patch to src text.  Returns (patched_text, diff_summary)."""
     if ALREADY_MARKER in src:
         raise RuntimeError(
             f"Already patched: {ALREADY_MARKER!r} already present in target."
         )
-    if OLD_RELAY_LINE not in src:
+
+    m = _RELAY_RE.search(src)
+    if m is None:
+        diag = _show_relay_lines(src)
         raise RuntimeError(
-            f"Cannot find expected relay call {OLD_RELAY_LINE!r} in target. "
-            "Has the file changed?"
+            f"Cannot find relay(\"\\n\".join(lines)) call in target.\n"
+            f"Lines containing 'relay(' in the file:\n{diag}"
         )
 
-    patched = src
+    indent = m.group("indent")
+    replacement = f"{indent}_try_executable_delivery(selected, now=now)"
+    patched = _RELAY_RE.sub(replacement, src, count=1)
 
-    # 1. Inject import after the bitunix_runtime import block.
-    if IMPORT_ANCHOR in patched:
-        idx = patched.index(IMPORT_ANCHOR)
-        # Find the end of this import statement (may span multiple lines with \).
-        end = patched.index("\n", idx)
-        while patched[end - 1] == "\\":
-            end = patched.index("\n", end + 1)
-        patched = patched[: end + 1] + IMPORT_INJECTION + patched[end + 1 :]
+    # Inject import after the bitunix_runtime import line.
+    imp_match = IMPORT_ANCHOR_RE.search(patched)
+    if imp_match:
+        end = imp_match.end()
+        patched = patched[:end] + IMPORT_INJECTION + patched[end:]
 
-    # 2. Remove old relay call.
-    patched = patched.replace(OLD_RELAY_BLOCK, NEW_RELAY_BLOCK, 1)
-
-    # 3. Append helper + call to _try_executable_delivery.
-    #    Insert the call right before the helpers are appended
-    #    so it appears as part of the scan function body.
-    #    Detect the last occurrence of `selected` to find where to inject call.
-    insert_marker = "\n    return "
-    if insert_marker in patched:
-        last_return = patched.rindex(insert_marker)
-        patched = (
-            patched[:last_return]
-            + f"\n{CALL_INJECTION}"
-            + patched[last_return:]
-        )
-
-    # 4. Append helper at EOF.
+    # Append helper at EOF.
     patched = patched.rstrip("\n") + "\n" + HELPER_CODE
 
     lines_changed = abs(patched.count("\n") - src.count("\n"))
-    summary = f"+{lines_changed} lines (import, relay removal, helper, call)"
+    summary = f"+{lines_changed} lines (relay→_try_executable_delivery, import, helper)"
     return patched, summary
 
 
@@ -216,7 +210,7 @@ def main() -> None:
 
     src = target.read_text(encoding="utf-8")
     try:
-        patched, summary = patch(src, dry_run=args.check)
+        patched, summary = patch(src)
     except RuntimeError as exc:
         print(f"PATCH: SKIP — {exc}")
         sys.exit(0)
@@ -226,7 +220,6 @@ def main() -> None:
         print(f"DRY-RUN: target={target}")
         sys.exit(0)
 
-    # Atomic write.
     fd, tmp = tempfile.mkstemp(dir=target.parent, suffix=".tmp", prefix=".patch_")
     try:
         os.write(fd, patched.encode("utf-8"))
