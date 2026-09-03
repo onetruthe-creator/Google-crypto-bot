@@ -43,11 +43,24 @@ if [[ ! -f "${TARGET_PY}" ]]; then
 fi
 
 # ── 2. Backup ─────────────────────────────────────────────────────────────────
+# Only back up the ORIGINAL (unpatched) file. If it's already patched, skip the
+# backup so we don't overwrite the clean backup with a patched copy.
 mkdir -p "${BACKUP_DIR}"
 BACKUP_FILE="${BACKUP_DIR}/bitunix_trade_alerts.${TIMESTAMP}.py"
-cp -p "${TARGET_PY}" "${BACKUP_FILE}"
-echo "[BACKUP] ${BACKUP_FILE}"
-echo "         sha256=$(sha256sum "${BACKUP_FILE}" | awk '{print $1}')"
+if grep -q "try_deliver_executable" "${TARGET_PY}" 2>/dev/null; then
+  echo "[BACKUP] SKIP — file already patched; preserving earlier clean backup"
+  BACKUP_FILE="$(ls -1t "${BACKUP_DIR}"/bitunix_trade_alerts.*.py 2>/dev/null | head -1)"
+  if [[ -z "${BACKUP_FILE}" ]]; then
+    echo "WARNING: no prior backup found — manual rollback may not be possible" >&2
+  else
+    echo "[BACKUP] Using existing backup: ${BACKUP_FILE}"
+    echo "         sha256=$(sha256sum "${BACKUP_FILE}" | awk '{print $1}')"
+  fi
+else
+  cp -p "${TARGET_PY}" "${BACKUP_FILE}"
+  echo "[BACKUP] ${BACKUP_FILE}"
+  echo "         sha256=$(sha256sum "${BACKUP_FILE}" | awk '{print $1}')"
+fi
 
 # ── 3. Install SME modules ────────────────────────────────────────────────────
 MODULES=(
@@ -84,7 +97,9 @@ for mod in "${MODULES[@]}"; do
   echo "  $(sha256sum "${f}" | awk '{print $1}')  ${f}"
 done
 echo "  $(sha256sum "${TARGET_PY}" | awk '{print $1}')  ${TARGET_PY} (patched)"
-echo "  $(sha256sum "${BACKUP_FILE}" | awk '{print $1}')  ${BACKUP_FILE} (backup)"
+if [[ -n "${BACKUP_FILE}" && -f "${BACKUP_FILE}" ]]; then
+  echo "  $(sha256sum "${BACKUP_FILE}" | awk '{print $1}')  ${BACKUP_FILE} (backup — rollback target)"
+fi
 
 # ── 6. Post-install validation ────────────────────────────────────────────────
 echo ""
