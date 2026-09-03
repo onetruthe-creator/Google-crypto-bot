@@ -67,6 +67,7 @@ MODULES=(
   "lb_executable_validator.py"
   "lb_executable_formatter.py"
   "lb_executable_delivery.py"
+  "ladybug_retest_detector.py"
 )
 
 echo ""
@@ -82,11 +83,21 @@ for mod in "${MODULES[@]}"; do
   echo "  ${dst}"
 done
 
-# ── 4. Apply patch ────────────────────────────────────────────────────────────
+# ── 4. Apply patches ──────────────────────────────────────────────────────────
 echo ""
 echo "[PATCH] Applying patch to bitunix_trade_alerts.py..."
 python3 "${SCRIPTS_SRC}/patch_bitunix_trade_alerts_executable.py" \
   --target "${TARGET_PY}"
+
+SCOUT_PY="${WORKSPACE}/sovereign_mission_engine/bitunix_market_scout.py"
+if [[ -f "${SCOUT_PY}" ]]; then
+  echo ""
+  echo "[PATCH] Applying retest-detector patch to bitunix_market_scout.py..."
+  python3 "${SCRIPTS_SRC}/patch_bitunix_market_scout_retest.py" \
+    --target "${SCOUT_PY}"
+else
+  echo "[PATCH] SKIP market scout — not found at ${SCOUT_PY}"
+fi
 
 # ── 5. SHA-256 manifest ───────────────────────────────────────────────────────
 echo ""
@@ -97,6 +108,9 @@ for mod in "${MODULES[@]}"; do
   echo "  $(sha256sum "${f}" | awk '{print $1}')  ${f}"
 done
 echo "  $(sha256sum "${TARGET_PY}" | awk '{print $1}')  ${TARGET_PY} (patched)"
+if [[ -f "${SCOUT_PY}" ]]; then
+  echo "  $(sha256sum "${SCOUT_PY}" | awk '{print $1}')  ${SCOUT_PY} (patched)"
+fi
 if [[ -n "${BACKUP_FILE}" && -f "${BACKUP_FILE}" ]]; then
   echo "  $(sha256sum "${BACKUP_FILE}" | awk '{print $1}')  ${BACKUP_FILE} (backup — rollback target)"
 fi

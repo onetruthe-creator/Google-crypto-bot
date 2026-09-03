@@ -195,6 +195,35 @@ def main() -> None:
             f"marker not found in {target}" if "try_deliver_executable" not in content else "",
         )
 
+    # V11 — ladybug_retest_detector importable
+    try:
+        from sovereign_mission_engine.ladybug_retest_detector import detect_retest, RetestDetection
+        check("V11 retest detector importable", True)
+    except Exception as exc:
+        check("V11 retest detector importable", False, str(exc))
+
+    # V12 — detect_retest returns RetestDetection for valid input
+    try:
+        from sovereign_mission_engine.ladybug_retest_detector import detect_retest
+        candles = [{"close": str(100.0 + i * 0.01), "open": str(100.0 + i * 0.01)}
+                   for i in range(100)]
+        r = detect_retest(candles, direction="SHORT", last_price=100.0, atr_pct=1.0)
+        check("V12 detect_retest returns RetestDetection", isinstance(r, RetestDetection), str(r))
+    except Exception as exc:
+        check("V12 detect_retest returns RetestDetection", False, str(exc))
+
+    # V13 — patch marker in workspace bitunix_market_scout.py (optional)
+    scout = sme_path / "bitunix_market_scout.py"
+    if not scout.exists():
+        results.append(("V13 scout retest patch", SKIP, f"not found: {scout}"))
+    else:
+        scout_content = scout.read_text(encoding="utf-8")
+        check(
+            "V13 scout retest patch applied",
+            "ladybug_retest_detector" in scout_content,
+            f"marker not found in {scout}" if "ladybug_retest_detector" not in scout_content else "",
+        )
+
     _print_summary()
 
 
