@@ -99,6 +99,11 @@ else
   echo "[PATCH] SKIP market scout — not found at ${SCOUT_PY}"
 fi
 
+echo ""
+echo "[PATCH] Wiring retest fields into _try_executable_delivery..."
+python3 "${SCRIPTS_SRC}/patch_bitunix_trade_alerts_retest_wiring.py" \
+  --target "${TARGET_PY}"
+
 # ── 5. SHA-256 manifest ───────────────────────────────────────────────────────
 echo ""
 echo "[MANIFEST] sha256 checksums"

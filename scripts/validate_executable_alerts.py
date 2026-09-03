@@ -224,6 +224,18 @@ def main() -> None:
             f"marker not found in {scout}" if "ladybug_retest_detector" not in scout_content else "",
         )
 
+    # V14 — retest fields wired into _try_executable_delivery (not None)
+    if not target.exists():
+        results.append(("V14 retest fields wired", SKIP, f"not found: {target}"))
+    else:
+        ta_content = target.read_text(encoding="utf-8")
+        check(
+            "V14 retest fields wired",
+            "setup.breakout_level_price" in ta_content,
+            "hardcoded None still present — run patch_bitunix_trade_alerts_retest_wiring.py"
+            if "setup.breakout_level_price" not in ta_content else "",
+        )
+
     _print_summary()
 
 
