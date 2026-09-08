@@ -130,11 +130,11 @@ def main() -> None:
             retest_zone_high=49900.0,
             retest_confirmed=True,
             confirmation_candle_closed=True,
-            entry_trigger=49800.0,
+            entry_trigger=49950.0,    # 50 past zone_high (49900); 0.25*ATR_15m=100 → within tolerance
             take_profit_1=51500.0,
             stop_loss=48500.0,
             reward_risk=Decimal("2.35"),
-            atr_15m_price=400.0,
+            atr_15m_price=400.0,       # tolerance = 0.25 * 400 = 100
             funding_rate=0.0001,
             relative_volume=2.5,
             stop_precedes_liquidation=True,

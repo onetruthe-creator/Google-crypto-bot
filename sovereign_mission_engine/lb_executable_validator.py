@@ -17,7 +17,7 @@ Gate summary
  9  Confirmation candle: confirmation_candle_closed is True
 10  Orientation: LONG: stop < entry <= tp1; SHORT: tp1 <= entry < stop
 11  Reward-risk: reward_risk >= Decimal("2.0")
-12  Chase boundary: LONG: entry_trigger <= retest_zone_high; SHORT: entry_trigger >= retest_zone_low
+12  Chase boundary: LONG: entry_trigger - retest_zone_high <= 0.25 * atr_15m_price; SHORT: retest_zone_low - entry_trigger <= 0.25 * atr_15m_price
 13  Funding rate: |funding_rate| < 0.0015
 14  Relative volume: relative_volume >= 1.5
 15  Leverage safety: stop_precedes_liquidation == True
@@ -77,9 +77,8 @@ class ExecutableSetupInput:
     # Gate 11 — reward-risk
     reward_risk: Optional[Decimal] = None        # >= 2.0
 
-    # Gate 12 — chase boundary (entry must be within retest zone)
-    # atr_15m_price retained for callers that compute it; not used in Gate 12 evaluation.
-    atr_15m_price: Optional[float] = None
+    # Gate 12 — chase boundary
+    atr_15m_price: Optional[float] = None        # 0.25*atr_15m_price = allowed overshoot past retest zone
 
     # Gate 13 — funding rate
     funding_rate: Optional[float] = None         # abs < 0.0015
@@ -275,27 +274,31 @@ def validate_executable_setup(inp: ExecutableSetupInput) -> ExecutableValidatorR
             reasons.append(f"GATE11_FAIL: reward_risk={inp.reward_risk!r} not numeric")
 
     # --- Gate 12: Chase boundary ---
-    # Entry must remain within the retest zone: LONG entry <= retest_zone_high;
-    # SHORT entry >= retest_zone_low.  Entering above (LONG) or below (SHORT) the
-    # retest zone means price has already left the zone — chasing.
-    if inp.entry_trigger is None:
-        reasons.append("GATE12_FAIL: entry_trigger missing")
+    # Entry may overshoot the retest zone boundary by at most 0.25 * ATR_15m.
+    # LONG: entry_trigger - retest_zone_high <= 0.25 * atr_15m_price
+    # SHORT: retest_zone_low - entry_trigger <= 0.25 * atr_15m_price
+    if inp.entry_trigger is None or inp.atr_15m_price is None:
+        reasons.append("GATE12_FAIL: entry_trigger/atr_15m_price missing")
     elif inp.direction == "LONG":
         if inp.retest_zone_high is None:
-            reasons.append("GATE12_FAIL: retest_zone_high missing (needed for LONG chase boundary)")
-        elif inp.entry_trigger > inp.retest_zone_high:
-            reasons.append(
-                f"GATE12_FAIL: entry exceeded retest boundary={inp.retest_zone_high:.6f} "
-                f"(entry={inp.entry_trigger:.6f})"
-            )
+            reasons.append("GATE12_FAIL: retest_zone_high missing")
+        else:
+            overshoot = inp.entry_trigger - inp.retest_zone_high
+            if overshoot > 0.25 * inp.atr_15m_price:
+                reasons.append(
+                    f"GATE12_FAIL: entry exceeded retest boundary={inp.retest_zone_high:.6f} "
+                    f"(entry={inp.entry_trigger:.6f})"
+                )
     elif inp.direction == "SHORT":
         if inp.retest_zone_low is None:
-            reasons.append("GATE12_FAIL: retest_zone_low missing (needed for SHORT chase boundary)")
-        elif inp.entry_trigger < inp.retest_zone_low:
-            reasons.append(
-                f"GATE12_FAIL: entry below retest boundary={inp.retest_zone_low:.6f} "
-                f"(entry={inp.entry_trigger:.6f})"
-            )
+            reasons.append("GATE12_FAIL: retest_zone_low missing")
+        else:
+            overshoot = inp.retest_zone_low - inp.entry_trigger
+            if overshoot > 0.25 * inp.atr_15m_price:
+                reasons.append(
+                    f"GATE12_FAIL: entry below retest boundary={inp.retest_zone_low:.6f} "
+                    f"(entry={inp.entry_trigger:.6f})"
+                )
     # If direction is None/invalid, Gate 3 already fails-closed; no double-count here.
 
     # --- Gate 13: Funding rate ---
