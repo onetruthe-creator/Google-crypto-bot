@@ -51,10 +51,13 @@ _SOVEREIGN_FUNCTION = '''
 def _deliver_via_sovereign(symbol: str) -> None:
     """Trigger a full sovereign scan + 24-gate delivery for a confirmed symbol.
 
-    Calls sovereign_mission_engine/bitunix_trade_alerts.py as a subprocess
+    Invokes sovereign_mission_engine.bitunix_trade_alerts as a module (-m)
     with --symbol <symbol> and LADYBUG_EXECUTABLE_ALERTS_ENABLED=1.
     The subprocess does a live market fetch, scores the symbol, and runs
     all 24 gates before any Telegram relay.
+
+    Must use -m (not direct script path) because bitunix_trade_alerts.py uses
+    relative imports that only resolve when run as part of the package.
 
     AUTHORIZATION: NONE — actual relay gated by LADYBUG_EXECUTABLE_ALERTS_ENABLED.
     """
@@ -64,17 +67,13 @@ def _deliver_via_sovereign(symbol: str) -> None:
     import sys as _sys
     from pathlib import Path as _Path
 
-    _script = (
-        _Path(__file__).resolve().parent.parent
-        / "sovereign_mission_engine"
-        / "bitunix_trade_alerts.py"
-    )
-    if not _script.exists():
+    _workspace = str(_Path(__file__).resolve().parent.parent)
+    _sme_init = _Path(_workspace) / "sovereign_mission_engine" / "__init__.py"
+    if not _sme_init.exists():
         _logging.getLogger(__name__).warning(
-            "sovereign delivery script not found: %s", _script
+            "sovereign_mission_engine package not found under: %s", _workspace
         )
         return
-    _workspace = str(_script.parent.parent)
     _existing_pp = _os.environ.get("PYTHONPATH", "")
     _pythonpath = f"{_workspace}:{_existing_pp}" if _existing_pp else _workspace
     _env = {
@@ -84,7 +83,9 @@ def _deliver_via_sovereign(symbol: str) -> None:
     }
     try:
         _sp.run(
-            [_sys.executable, str(_script), "--symbol", symbol],
+            [_sys.executable, "-m", "sovereign_mission_engine.bitunix_trade_alerts",
+             "--symbol", symbol],
+            cwd=_workspace,
             env=_env,
             timeout=120,
         )

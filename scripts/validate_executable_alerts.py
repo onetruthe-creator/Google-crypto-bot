@@ -253,6 +253,7 @@ def main() -> None:
     monitor = monitor.resolve()
     if not monitor.exists():
         results.append(("V16 sovereign delivery wired", SKIP, f"not found: {monitor}"))
+        results.append(("V17 -m invocation in monitor", SKIP, f"not found: {monitor}"))
     else:
         mon_content = monitor.read_text(encoding="utf-8")
         check(
@@ -260,6 +261,13 @@ def main() -> None:
             "_deliver_via_sovereign" in mon_content,
             "run patch_ladybug_monitor_sovereign_delivery.py"
             if "_deliver_via_sovereign" not in mon_content else "",
+        )
+        # V17 — _deliver_via_sovereign uses -m invocation (not direct script path)
+        check(
+            "V17 -m invocation in monitor",
+            "sovereign_mission_engine.bitunix_trade_alerts" in mon_content,
+            "run patch_ladybug_monitor_m_invocation.py (direct-path call will fail)"
+            if "sovereign_mission_engine.bitunix_trade_alerts" not in mon_content else "",
         )
 
     _print_summary()

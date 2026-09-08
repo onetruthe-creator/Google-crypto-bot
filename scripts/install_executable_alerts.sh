@@ -115,6 +115,10 @@ if [[ -f "${MONITOR_PY}" ]]; then
   echo "[PATCH] Wiring sovereign delivery into ladybug/monitor.py..."
   python3 "${SCRIPTS_SRC}/patch_ladybug_monitor_sovereign_delivery.py" \
     --target "${MONITOR_PY}"
+  echo ""
+  echo "[PATCH] Ensuring -m module invocation in _deliver_via_sovereign..."
+  python3 "${SCRIPTS_SRC}/patch_ladybug_monitor_m_invocation.py" \
+    --target "${MONITOR_PY}"
 else
   echo "[PATCH] SKIP ladybug monitor — not found at ${MONITOR_PY}"
 fi
