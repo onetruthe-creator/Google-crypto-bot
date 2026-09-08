@@ -74,7 +74,14 @@ def _deliver_via_sovereign(symbol: str) -> None:
             "sovereign delivery script not found: %s", _script
         )
         return
-    _env = {**_os.environ, "LADYBUG_EXECUTABLE_ALERTS_ENABLED": "1"}
+    _workspace = str(_script.parent.parent)
+    _existing_pp = _os.environ.get("PYTHONPATH", "")
+    _pythonpath = f"{_workspace}:{_existing_pp}" if _existing_pp else _workspace
+    _env = {
+        **_os.environ,
+        "LADYBUG_EXECUTABLE_ALERTS_ENABLED": "1",
+        "PYTHONPATH": _pythonpath,
+    }
     try:
         _sp.run(
             [_sys.executable, str(_script), "--symbol", symbol],
