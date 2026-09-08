@@ -42,6 +42,7 @@ from decimal import Decimal
 from typing import Optional
 
 MAX_SUGGESTED_LEVERAGE = 10
+MIN_EFFECTIVE_SCORE = 82.0
 
 
 @dataclass(frozen=True)
