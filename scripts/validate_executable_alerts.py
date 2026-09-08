@@ -236,6 +236,32 @@ def main() -> None:
             if "setup.breakout_level_price" not in ta_content else "",
         )
 
+    # V15 — --symbol filter in bitunix_trade_alerts.py
+    if not target.exists():
+        results.append(("V15 symbol filter", SKIP, f"not found: {target}"))
+    else:
+        ta_content = target.read_text(encoding="utf-8")
+        check(
+            "V15 symbol filter in trade-alerts",
+            "_symbol_filter" in ta_content,
+            "run patch_bitunix_trade_alerts_symbol_filter.py"
+            if "_symbol_filter" not in ta_content else "",
+        )
+
+    # V16 — sovereign delivery wired into ladybug/monitor.py
+    monitor = sme_path / ".." / "ladybug" / "monitor.py"
+    monitor = monitor.resolve()
+    if not monitor.exists():
+        results.append(("V16 sovereign delivery wired", SKIP, f"not found: {monitor}"))
+    else:
+        mon_content = monitor.read_text(encoding="utf-8")
+        check(
+            "V16 sovereign delivery wired",
+            "_deliver_via_sovereign" in mon_content,
+            "run patch_ladybug_monitor_sovereign_delivery.py"
+            if "_deliver_via_sovereign" not in mon_content else "",
+        )
+
     _print_summary()
 
 

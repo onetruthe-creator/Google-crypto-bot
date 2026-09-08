@@ -104,6 +104,21 @@ echo "[PATCH] Wiring retest fields into _try_executable_delivery..."
 python3 "${SCRIPTS_SRC}/patch_bitunix_trade_alerts_retest_wiring.py" \
   --target "${TARGET_PY}"
 
+echo ""
+echo "[PATCH] Adding --symbol filter to bitunix_trade_alerts.py..."
+python3 "${SCRIPTS_SRC}/patch_bitunix_trade_alerts_symbol_filter.py" \
+  --target "${TARGET_PY}"
+
+MONITOR_PY="${WORKSPACE}/ladybug/monitor.py"
+if [[ -f "${MONITOR_PY}" ]]; then
+  echo ""
+  echo "[PATCH] Wiring sovereign delivery into ladybug/monitor.py..."
+  python3 "${SCRIPTS_SRC}/patch_ladybug_monitor_sovereign_delivery.py" \
+    --target "${MONITOR_PY}"
+else
+  echo "[PATCH] SKIP ladybug monitor — not found at ${MONITOR_PY}"
+fi
+
 # ── 5. SHA-256 manifest ───────────────────────────────────────────────────────
 echo ""
 echo "[MANIFEST] sha256 checksums"
