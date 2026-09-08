@@ -41,6 +41,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
+MAX_SUGGESTED_LEVERAGE = 10
+
 
 @dataclass(frozen=True)
 class ExecutableSetupInput:
