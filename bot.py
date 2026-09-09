@@ -14,11 +14,12 @@ import anthropic
 import schedule
 
 import config
+from coingecko_data import fetch_ohlcv, fetch_ticker
 
 if config.EXCHANGE_ID.lower() == "bitunix":
-    from bitunix_exchange import get_exchange, fetch_ohlcv, fetch_ticker, fetch_balance, place_market_order
+    from bitunix_exchange import get_exchange, fetch_balance, place_market_order
 else:
-    from exchange import get_exchange, fetch_ohlcv, fetch_ticker, fetch_balance, place_market_order
+    from exchange import get_exchange, fetch_balance, place_market_order
 
 from analyzer import analyze_market
 
@@ -34,12 +35,13 @@ def run_cycle(client: anthropic.Anthropic) -> None:
     log.info("=== Starting analysis cycle ===")
 
     try:
+        log.info("Fetching market data from CoinGecko ...")
+        df = fetch_ohlcv(config.TRADING_PAIR)
+        ticker = fetch_ticker(config.TRADING_PAIR)
         exchange = get_exchange(dry_run=config.DRY_RUN)
-        df = fetch_ohlcv(exchange)
-        ticker = fetch_ticker(exchange)
         balance = fetch_balance(exchange)
     except Exception as exc:
-        log.error("Exchange error: %s", exc)
+        log.error("Data fetch error: %s", exc)
         return
 
     log.info(

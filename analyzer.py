@@ -1,4 +1,5 @@
 import json
+import math
 import anthropic
 import pandas as pd
 import ta
@@ -21,6 +22,8 @@ def _compute_indicators(df: pd.DataFrame) -> dict:
     ema_20 = ta.trend.EMAIndicator(close, window=20).ema_indicator().iloc[-1]
     ema_50 = ta.trend.EMAIndicator(close, window=50).ema_indicator().iloc[-1]
     volume_sma = volume.rolling(20).mean().iloc[-1]
+    # volume ratio is unavailable when CoinGecko returns no volume data
+    vol_ratio = round(volume.iloc[-1] / volume_sma, 2) if (volume_sma and not math.isnan(volume_sma) and volume_sma > 0) else None
 
     return {
         "rsi_14": round(rsi, 2),
@@ -32,7 +35,7 @@ def _compute_indicators(df: pd.DataFrame) -> dict:
         "bollinger_lower": round(bb_lower, 2),
         "ema_20": round(ema_20, 2),
         "ema_50": round(ema_50, 2),
-        "volume_vs_sma": round(volume.iloc[-1] / volume_sma, 2),
+        "volume_vs_sma": vol_ratio,
     }
 
 
