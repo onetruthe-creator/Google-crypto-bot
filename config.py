@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-EXCHANGE_ID = os.getenv("EXCHANGE_ID", "binance")
+EXCHANGE_ID = os.getenv("EXCHANGE_ID", "kraken")
 EXCHANGE_API_KEY = os.getenv("EXCHANGE_API_KEY", "")
 EXCHANGE_SECRET = os.getenv("EXCHANGE_SECRET", "")
 TRADING_PAIR = os.getenv("TRADING_PAIR", "BTC/USDT")
