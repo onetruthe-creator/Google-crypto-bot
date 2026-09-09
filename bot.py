@@ -14,7 +14,12 @@ import anthropic
 import schedule
 
 import config
-from exchange import get_exchange, fetch_ohlcv, fetch_ticker, fetch_balance, place_market_order
+
+if config.EXCHANGE_ID.lower() == "bitunix":
+    from bitunix_exchange import get_exchange, fetch_ohlcv, fetch_ticker, fetch_balance, place_market_order
+else:
+    from exchange import get_exchange, fetch_ohlcv, fetch_ticker, fetch_balance, place_market_order
+
 from analyzer import analyze_market
 
 logging.basicConfig(
