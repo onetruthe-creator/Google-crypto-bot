@@ -23,6 +23,7 @@ else:
     from exchange import get_exchange, fetch_balance, place_market_order
 
 from analyzer import analyze_market
+from trade_logger import log_decision, log_exit
 
 logging.basicConfig(
     level=logging.INFO,
@@ -77,15 +78,18 @@ def run_cycle(client: anthropic.Anthropic) -> None:
         pos = get_position()
         if _execute_order(exchange, "sell", ticker):
             close_position()
+            exit_label = exit_reason.replace("_", "-")
             tg.notify_trade(
                 action="sell",
                 price=current_price,
                 amount_usdt=pos["amount_usdt"],
                 confidence=1.0,
-                reasoning=f"Automatic exit: {exit_reason.replace('_', '-')}",
+                reasoning=f"Automatic exit: {exit_label}",
                 engine="risk-manager",
                 dry_run=config.DRY_RUN,
             )
+            log_exit(config.TRADING_PAIR, current_price, pos["amount_usdt"],
+                     f"Automatic exit: {exit_label}", config.DRY_RUN)
         log.info("=== Cycle complete ===\n")
         return
 
@@ -112,16 +116,22 @@ def run_cycle(client: anthropic.Anthropic) -> None:
 
     # ── Trade execution ───────────────────────────────────────────────────────
     if action in ("buy", "sell") and confidence >= 0.65 and risk != "high":
-        if _execute_order(exchange, action, ticker):
+        executed = _execute_order(exchange, action, ticker)
+        if executed:
             if action == "buy":
                 open_position("buy", current_price, config.TRADE_AMOUNT_USDT)
             else:
                 close_position()
             tg.notify_trade(action, current_price, config.TRADE_AMOUNT_USDT,
                             confidence, reasoning, engine, config.DRY_RUN)
+        log_decision(config.TRADING_PAIR, action, confidence, risk, current_price,
+                     config.TRADE_AMOUNT_USDT, executed, config.DRY_RUN,
+                     engine, reasoning, signals)
     else:
         log.info("No trade (action=%s, confidence=%.2f, risk=%s)", action, confidence, risk)
         tg.notify_hold(current_price, confidence, reasoning, signals, engine)
+        log_decision(config.TRADING_PAIR, action, confidence, risk, current_price,
+                     0.0, False, config.DRY_RUN, engine, reasoning, signals)
 
     log.info("=== Cycle complete ===\n")
 
