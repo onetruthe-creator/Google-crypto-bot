@@ -31,14 +31,20 @@ def fetch_ticker(exchange: ccxt.Exchange) -> dict:
 
 
 def fetch_balance(exchange: ccxt.Exchange) -> dict:
-    balance = exchange.fetch_balance()
     base, quote = TRADING_PAIR.split("/")
-    return {
-        "base": balance["free"].get(base, 0.0),
-        "quote": balance["free"].get(quote, 0.0),
-        "base_currency": base,
-        "quote_currency": quote,
-    }
+    # Skip authenticated call when no keys are configured (dry-run / analysis-only mode)
+    if not (EXCHANGE_API_KEY and EXCHANGE_SECRET):
+        return {"base": 0.0, "quote": 0.0, "base_currency": base, "quote_currency": quote}
+    try:
+        balance = exchange.fetch_balance()
+        return {
+            "base": balance["free"].get(base, 0.0),
+            "quote": balance["free"].get(quote, 0.0),
+            "base_currency": base,
+            "quote_currency": quote,
+        }
+    except ccxt.AuthenticationError:
+        return {"base": 0.0, "quote": 0.0, "base_currency": base, "quote_currency": quote}
 
 
 def place_market_order(exchange: ccxt.Exchange, side: str, amount_usdt: float, ticker: dict) -> dict | None:
