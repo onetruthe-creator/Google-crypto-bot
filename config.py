@@ -15,6 +15,14 @@ CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", "15"))
 CANDLE_TIMEFRAME = "15m"
 CANDLE_LIMIT = 96  # 24 hours of 15m candles
 
+# Risk management
+STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "2.5"))    # % below entry
+TAKE_PROFIT_PCT = float(os.getenv("TAKE_PROFIT_PCT", "5.0")) # % above entry
+
+# Telegram
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
 CLAUDE_MODEL = "claude-opus-5"
 
 # Gemini fallback (used when Claude quota is exhausted)
