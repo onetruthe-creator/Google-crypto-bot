@@ -49,10 +49,11 @@ def _get(path: str, params: dict) -> dict | list:
     return resp.json()
 
 
-def fetch_ohlcv(pair: str = TRADING_PAIR, days: int = 2) -> pd.DataFrame:
+def fetch_ohlcv(pair: str = TRADING_PAIR, days: int = 1) -> pd.DataFrame:
     """
     Fetches OHLC candles from CoinGecko.
-    Free tier granularity: 1-2 days → 30-minute candles (~96 candles for 2 days).
+    Valid days values: 1, 7, 14, 30, 90, 180, 365.
+    days=1 → 30-minute candles (~48 candles).
     Returns a DataFrame with columns: timestamp, open, high, low, close, volume.
     """
     coin = _coin_id(pair)
@@ -66,7 +67,7 @@ def fetch_ohlcv(pair: str = TRADING_PAIR, days: int = 2) -> pd.DataFrame:
     try:
         chart = _get(f"/coins/{coin}/market_chart", {
             "vs_currency": "usd",
-            "days": days,
+            "days": 1,
             "interval": "hourly",
         })
         vol_df = pd.DataFrame(chart["total_volumes"], columns=["timestamp", "volume"])
