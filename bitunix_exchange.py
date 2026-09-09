@@ -165,6 +165,7 @@ def fetch_balance(exchange: BitunixExchange) -> dict:
             if isinstance(item, dict):
                 coin = item.get("coin", item.get("currency", ""))
                 assets[coin] = float(item.get("available", item.get("free", 0)))
+        log.info("Bitunix wallet coins: %s", list(assets.keys()))
         return {
             "base":           assets.get(base, 0.0),
             "quote":          assets.get(quote, 0.0),
