@@ -16,16 +16,23 @@ AI-powered cryptocurrency trading bot using **Anthropic Claude** for market anal
 ## Quick Start
 
 ```bash
-# 1. Install dependencies
-pip install -r requirements.txt
+# 1. Clone the repo and enter the directory
+git clone https://github.com/onetruthe-creator/Google-crypto-bot.git
+cd Google-crypto-bot
 
-# 2. Configure environment
-cp .env.example .env
-# Edit .env and fill in your ANTHROPIC_API_KEY and exchange credentials
+# 2. One-command setup (creates .venv, installs deps, copies .env)
+bash setup.sh
 
-# 3. Run the bot
-python bot.py
+# 3. Edit .env and fill in your ANTHROPIC_API_KEY and exchange credentials
+nano .env   # or: code .env / vim .env
+
+# 4. Run the bot
+.venv/bin/python bot.py
 ```
+
+> **Debian/Ubuntu users:** do not use `pip install` directly — use the `setup.sh` script above,
+> which creates an isolated virtual environment and avoids the externally-managed-environment error.
+> Use `.venv/bin/python` (not `python` or `python3`) to run the bot.
 
 ## Configuration (`.env`)
 
