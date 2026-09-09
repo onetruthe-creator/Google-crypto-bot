@@ -18,9 +18,10 @@ from position_manager import check_exit, open_position, close_position, get_posi
 import telegram_notify as tg
 
 if config.EXCHANGE_ID.lower() == "bitunix":
-    from bitunix_exchange import get_exchange, fetch_balance, place_market_order
+    from bitunix_exchange import get_exchange, fetch_balance, place_market_order, place_limit_order
 else:
     from exchange import get_exchange, fetch_balance, place_market_order
+    place_limit_order = None
 
 from analyzer import analyze_market
 from trade_logger import log_decision, log_exit
@@ -33,17 +34,39 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-def _execute_order(exchange, action: str, ticker: dict) -> bool:
+def _execute_limit_order(exchange, action: str, ticker: dict, decision: dict) -> bool:
+    current_price = ticker["last"]
+    order_price = float(decision.get("order_price") or current_price)
+    tp_price    = decision.get("tp_price")
+    sl_price    = decision.get("sl_price")
+    direction   = decision.get("direction", "long" if action == "buy" else "short")
+    raw_vol     = decision.get("delta_volume")
+    delta_vol   = float(raw_vol) if raw_vol else round(config.TRADE_AMOUNT_USDT / order_price, 6)
+    amount_usdt = round(delta_vol * order_price, 2)
+
+    log.info(
+        "ORDER FORMAT | Entry Price: $%.2f | Type: LIMIT | Order Price: $%.2f | "
+        "TP: %s | SL: %s | Direction: %s | Delta Volume: %.6f",
+        current_price, order_price,
+        f"${tp_price:.2f}" if tp_price else "n/a",
+        f"${sl_price:.2f}" if sl_price else "n/a",
+        direction.upper(), delta_vol,
+    )
+
     if config.DRY_RUN:
-        log.info("[DRY RUN] Would execute %s %.2f USDT @ $%.2f",
-                 action.upper(), config.TRADE_AMOUNT_USDT, ticker["last"])
+        log.info("[DRY RUN] Would place LIMIT %s %.6f BTC @ $%.2f (≈$%.2f)",
+                 action.upper(), delta_vol, order_price, amount_usdt)
         return True
     try:
-        order = place_market_order(exchange, action, config.TRADE_AMOUNT_USDT, ticker)
-        log.info("Order executed: %s", order)
+        order = place_limit_order(
+            exchange, action, order_price, delta_vol,
+            tp_price=float(tp_price) if tp_price else None,
+            sl_price=float(sl_price) if sl_price else None,
+        )
+        log.info("Limit order placed: %s", order)
         return True
     except Exception as exc:
-        log.error("Order failed: %s", exc)
+        log.error("Limit order failed: %s", exc)
         tg.notify_error("Order execution", str(exc))
         return False
 
@@ -76,7 +99,9 @@ def run_cycle(client: anthropic.Anthropic) -> None:
     if exit_reason:
         log.info("Exiting position: %s", exit_reason.replace("_", "-").upper())
         pos = get_position()
-        if _execute_order(exchange, "sell", ticker):
+        exit_decision = {"order_price": current_price, "direction": "flat",
+                         "delta_volume": None, "tp_price": None, "sl_price": None}
+        if _execute_limit_order(exchange, "sell", ticker, exit_decision):
             close_position()
             exit_label = exit_reason.replace("_", "-")
             tg.notify_trade(
@@ -116,16 +141,20 @@ def run_cycle(client: anthropic.Anthropic) -> None:
 
     # ── Trade execution ───────────────────────────────────────────────────────
     if action in ("buy", "sell") and confidence >= 0.65 and risk != "high":
-        executed = _execute_order(exchange, action, ticker)
+        executed = _execute_limit_order(exchange, action, ticker, decision)
+        order_price = float(decision.get("order_price") or current_price)
+        raw_vol = decision.get("delta_volume")
+        delta_vol = float(raw_vol) if raw_vol else round(config.TRADE_AMOUNT_USDT / order_price, 6)
+        amount_usdt = round(delta_vol * order_price, 2)
         if executed:
             if action == "buy":
-                open_position("buy", current_price, config.TRADE_AMOUNT_USDT)
+                open_position("buy", order_price, amount_usdt)
             else:
                 close_position()
-            tg.notify_trade(action, current_price, config.TRADE_AMOUNT_USDT,
+            tg.notify_trade(action, order_price, amount_usdt,
                             confidence, reasoning, engine, config.DRY_RUN)
-        log_decision(config.TRADING_PAIR, action, confidence, risk, current_price,
-                     config.TRADE_AMOUNT_USDT, executed, config.DRY_RUN,
+        log_decision(config.TRADING_PAIR, action, confidence, risk, order_price,
+                     amount_usdt, executed, config.DRY_RUN,
                      engine, reasoning, signals)
     else:
         log.info("No trade (action=%s, confidence=%.2f, risk=%s)", action, confidence, risk)

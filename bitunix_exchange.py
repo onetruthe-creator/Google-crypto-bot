@@ -186,3 +186,25 @@ def place_market_order(exchange: BitunixExchange, side: str, amount_usdt: float,
         "type":   "MARKET",
         "qty":    str(qty),
     })
+
+
+def place_limit_order(
+    exchange: BitunixExchange,
+    side: str,
+    order_price: float,
+    delta_volume: float,
+    tp_price: float | None = None,
+    sl_price: float | None = None,
+) -> dict:
+    body = {
+        "symbol": _symbol(TRADING_PAIR),
+        "side":   side.upper(),
+        "type":   "LIMIT",
+        "price":  str(round(order_price, 2)),
+        "qty":    str(round(delta_volume, 6)),
+    }
+    if tp_price:
+        body["tpPrice"] = str(round(tp_price, 2))
+    if sl_price:
+        body["slPrice"] = str(round(sl_price, 2))
+    return _post_private("/api/spot/v1/order/place_order", body)
