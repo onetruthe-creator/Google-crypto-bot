@@ -1,9 +1,12 @@
 import json
+import logging
 import math
 import anthropic
 import pandas as pd
 import ta
 from config import CLAUDE_MODEL, TRADING_PAIR
+
+log = logging.getLogger(__name__)
 
 
 def _compute_indicators(df: pd.DataFrame) -> dict:
@@ -88,25 +91,34 @@ def analyze_market(client: anthropic.Anthropic, df: pd.DataFrame, ticker: dict, 
 
     user_prompt = f"Analyze this market data and provide a trading decision:\n\n{json.dumps(market_data, indent=2)}"
 
-    with client.messages.stream(
-        model=CLAUDE_MODEL,
-        max_tokens=1024,
-        thinking={"type": "adaptive"},
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
-    ) as stream:
-        response = stream.get_final_message()
-
-    raw_text = next(
-        (block.text for block in response.content if hasattr(block, "text")),
-        "{}",
-    )
-
     try:
-        decision = json.loads(raw_text)
-    except json.JSONDecodeError:
-        decision = {"action": "hold", "confidence": 0.0, "reasoning": "Parse error", "risk_level": "high", "key_signals": []}
+        with client.messages.stream(
+            model=CLAUDE_MODEL,
+            max_tokens=1024,
+            thinking={"type": "adaptive"},
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        ) as stream:
+            response = stream.get_final_message()
 
-    decision["current_price"] = current_price
-    decision["indicators"] = indicators
-    return decision
+        raw_text = next(
+            (block.text for block in response.content if hasattr(block, "text")),
+            "{}",
+        )
+        try:
+            decision = json.loads(raw_text)
+        except json.JSONDecodeError:
+            decision = {"action": "hold", "confidence": 0.0, "reasoning": "Parse error", "risk_level": "high", "key_signals": []}
+
+        decision["current_price"] = current_price
+        decision["indicators"] = indicators
+        decision["ai_engine"] = "claude"
+        return decision
+
+    except anthropic.RateLimitError as exc:
+        log.warning("Claude quota exhausted (%s) — falling back to Gemini.", exc)
+        from gemini_analyzer import analyze_market_gemini
+        candles = _recent_candles_summary(df)
+        decision = analyze_market_gemini(df, ticker, balance, indicators, candles)
+        decision["ai_engine"] = "gemini-fallback"
+        return decision

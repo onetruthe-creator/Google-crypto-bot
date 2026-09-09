@@ -67,11 +67,13 @@ def run_cycle(client: anthropic.Anthropic) -> None:
     reasoning = decision.get("reasoning", "")
     signals = decision.get("key_signals", [])
 
+    engine = decision.get("ai_engine", "claude")
     log.info(
-        "Decision: %s | Confidence: %.0f%% | Risk: %s",
+        "Decision: %s | Confidence: %.0f%% | Risk: %s | Engine: %s",
         action.upper(),
         confidence * 100,
         risk,
+        engine,
     )
     log.info("Reasoning: %s", reasoning)
     if signals:

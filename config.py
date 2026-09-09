@@ -16,3 +16,7 @@ CANDLE_TIMEFRAME = "15m"
 CANDLE_LIMIT = 96  # 24 hours of 15m candles
 
 CLAUDE_MODEL = "claude-opus-5"
+
+# Gemini fallback (used when Claude quota is exhausted)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
