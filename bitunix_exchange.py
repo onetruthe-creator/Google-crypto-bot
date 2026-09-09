@@ -63,13 +63,18 @@ def _auth_headers(query: str = "", body: str = "") -> dict:
     }
 
 
+def _ok(code) -> bool:
+    """Accept Bitunix success codes returned as int or string."""
+    return int(code) in (0, 200)
+
+
 def _get_public(path: str, params: dict) -> dict:
     query = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
     url = f"{BASE_URL}{path}?{query}"
     resp = requests.get(url, timeout=10)
     resp.raise_for_status()
     data = resp.json()
-    if data.get("code", 0) not in (0, 200):
+    if not _ok(data.get("code", 0)):
         raise RuntimeError(f"Bitunix error {data.get('code')}: {data.get('msg')}")
     return data
 
@@ -81,7 +86,7 @@ def _get_private(path: str, params: dict) -> dict:
     resp = requests.get(url, headers=headers, timeout=10)
     resp.raise_for_status()
     data = resp.json()
-    if data.get("code", 0) not in (0, 200):
+    if not _ok(data.get("code", 0)):
         raise RuntimeError(f"Bitunix error {data.get('code')}: {data.get('msg')}")
     return data
 
@@ -93,7 +98,7 @@ def _post_private(path: str, body: dict) -> dict:
     resp = requests.post(BASE_URL + path, data=body_str, headers=headers, timeout=10)
     resp.raise_for_status()
     data = resp.json()
-    if data.get("code", 0) not in (0, 200):
+    if not _ok(data.get("code", 0)):
         raise RuntimeError(f"Bitunix error {data.get('code')}: {data.get('msg')}")
     return data
 
