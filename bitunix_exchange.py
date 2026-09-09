@@ -159,7 +159,9 @@ def fetch_balance(exchange: BitunixExchange) -> dict:
     try:
         data = _get_private("/api/spot/v1/user/account", {})
         assets = {}
-        for item in data.get("data", {}).get("assets", data.get("data", [])):
+        raw = data.get("data", [])
+        items = raw if isinstance(raw, list) else raw.get("assets", [])
+        for item in items:
             if isinstance(item, dict):
                 coin = item.get("coin", item.get("currency", ""))
                 assets[coin] = float(item.get("available", item.get("free", 0)))
